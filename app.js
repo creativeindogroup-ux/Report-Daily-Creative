@@ -1,4 +1,18 @@
-import { SCRIPT_URL, GOOGLE_CLIENT_ID } from "./config.js";
+// config.js selalu diambil versi terbaru (tidak memakai cache browser)
+const CFG=await import("./config.js?v="+Date.now()).then(m=>({ok:true,...m})).catch(e=>({ok:false,err:String(e&&e.message||e)}));
+const SCRIPT_URL=String(CFG.SCRIPT_URL||"").trim();
+const GOOGLE_CLIENT_ID=String(CFG.GOOGLE_CLIENT_ID||"").trim();
+function configProblems(){
+  if(!CFG.ok)return["File config.js tidak bisa dibaca. Kemungkinan ada tanda kutip \" atau titik koma yang ikut terhapus saat mengedit. Bandingkan dengan contoh di PANDUAN.md Langkah 4."];
+  const p=[];
+  if(!SCRIPT_URL||/GANTI/i.test(SCRIPT_URL))p.push("SCRIPT_URL belum diganti dengan link Web App.");
+  else if(/\/dev$/.test(SCRIPT_URL))p.push("SCRIPT_URL memakai link berakhiran /dev. Gunakan link Web App yang berakhiran /exec (Deploy → Manage deployments).");
+  else if(!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(SCRIPT_URL))p.push("SCRIPT_URL bukan link Web App. Bentuk yang benar: https://script.google.com/macros/s/…/exec");
+  if(!GOOGLE_CLIENT_ID||/GANTI/i.test(GOOGLE_CLIENT_ID))p.push("GOOGLE_CLIENT_ID belum diganti dengan Client ID.");
+  else if(/(\.apps\.googleusercontent\.com){2}/.test(GOOGLE_CLIENT_ID))p.push("GOOGLE_CLIENT_ID tertulis \".apps.googleusercontent.com\" dua kali. Hapus salah satunya.");
+  else if(!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(GOOGLE_CLIENT_ID))p.push("GOOGLE_CLIENT_ID tidak sesuai format. Bentuk yang benar: 123456789012-abc….apps.googleusercontent.com (tanpa spasi).");
+  return p;
+}
 
 /* ---------- konstanta & util ---------- */
 const HARI=["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
@@ -393,7 +407,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 /* ---------- login Gmail (Google Identity Services) ---------- */
 function showGate(title,text,showLogin){
   $("gate").hidden=false;$("app").hidden=true;$("ctrls").hidden=!S.email;$("exportBtn").hidden=true;
-  $("gateTitle").textContent=title;$("gateText").textContent=text;$("gbtn").hidden=!showLogin;
+  $("gateTitle").textContent=title;$("gateText").textContent=text;$("gateText").style.textAlign=text.includes("\n")?"left":"center";$("gbtn").hidden=!showLogin;
 }
 function parseJwt(t){try{const p=t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");return JSON.parse(decodeURIComponent(atob(p).split("").map(c=>"%"+("00"+c.charCodeAt(0).toString(16)).slice(-2)).join("")))}catch(e){return null}}
 function setToken(t){
@@ -427,8 +441,8 @@ function onCredential(resp){
 // perpanjang login otomatis sebelum habis (token Google berlaku 1 jam)
 setInterval(()=>{if(TOKEN&&tokenExp-Date.now()<10*60000&&window.google?.accounts?.id)google.accounts.id.prompt()},5*60000);
 function initLogin(){
-  if(!SCRIPT_URL||/GANTI/.test(SCRIPT_URL)||!GOOGLE_CLIENT_ID||/GANTI/.test(GOOGLE_CLIENT_ID)){
-    showGate("Dashboard belum dihubungkan","Isi SCRIPT_URL dan GOOGLE_CLIENT_ID di file config.js (lihat PANDUAN.md).",false);return}
+  const prob=configProblems();
+  if(prob.length){showGate("Dashboard belum dihubungkan","Yang perlu diperbaiki di file config.js:\n• "+prob.join("\n• ")+"\n\nSetelah Commit di GitHub, tunggu 1–2 menit lalu muat ulang halaman.",false);return}
   google.accounts.id.initialize({client_id:GOOGLE_CLIENT_ID,callback:onCredential,auto_select:true,cancel_on_tap_outside:false,use_fedcm_for_prompt:true});
   google.accounts.id.renderButton($("gbtn"),{theme:"outline",size:"large",shape:"pill",text:"signin_with",locale:"id"});
   let saved="";try{saved=localStorage.getItem("idt")||""}catch(e){}
