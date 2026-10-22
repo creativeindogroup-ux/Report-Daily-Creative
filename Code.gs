@@ -1,0 +1,605 @@
+/**
+ * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2)
+ *
+ * Cara pasang / update: lihat PANDUAN.md bagian "Update ke versi 2".
+ * Ringkas: tempel seluruh isi file ini di Extensions → Apps Script, Save,
+ * jalankan "setupAwal" sekali, lalu Deploy → Manage deployments → New version.
+ */
+
+// ================== PENGATURAN ==================
+
+// Gmail atasan. Hanya akun ini yang bisa mengubah anggota tim, mengisi target,
+// dan mengoreksi report siapa pun. Bisa lebih dari satu.
+const ADMIN_EMAILS = [
+  "creative.indogroup@gmail.com"
+];
+
+// Client ID dari Google Cloud (sama dengan di config.js)
+const GOOGLE_CLIENT_ID = "408669150469-alc90o87lss37tvbb0kk92a59tqk500o.apps.googleusercontent.com";
+
+// Berapa hari perangkat diingat setelah login Gmail pertama
+const SESSION_DAYS = 90;
+
+// ================================================
+
+const TZ = "Asia/Jakarta";
+const VERSION = "v2.0";
+const BRAND_CODES = ["OLV", "KNG", "77", "MTR", "IDN", "RS", "TKS"];
+const BRAND_NAMES = { OLV: "Batik Oliver", KNG: "Kenangan Fashion", "77": "Batik 77", MTR: "Menteri", IDN: "Indo Group", RS: "Rama Shinta", TKS: "Taksaka" };
+const JABATAN = ["Content Creator", "Desain Grafis", "Admin"];
+const HARI = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+const BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"];
+const C_BLUE = "#5a6fa7", C_SOFT = "#e6eaf5", C_BAND = "#f4f6fb", C_WARN = "#fbefd6";
+
+const SH = {
+  team:   { name: "Anggota", head: ["ID", "Nama", "Jabatan", "Brand", "Gmail", "Foto (Drive)", "Versi foto"], text: [1, 4, 5, 6] },
+  target: { name: "Target", head: ["ID", "Nama", "Brand", "Minggu mulai (Senin)", "Target"], text: [1, 3, 4] },
+  db:     { name: "_data", head: ["Kunci", "Tanggal", "ID", "Brand", "Jumlah", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
+                                  "Tugas harian", "Link", "Kendala", "Solusi", "Lembur (jam)", "Diisi oleh", "Diperbarui"], text: [1, 2, 3, 4, 16, 17], hidden: true },
+  photo:  { name: "_foto", head: ["ID", "Thumbnail"], text: [1, 2], hidden: true }
+};
+const ALL_NAME = "Semua Report";
+
+/* =============================== PINTU MASUK =============================== */
+
+function doGet() {
+  return ContentService.createTextOutput("Daily Report Creative API " + VERSION + " aktif. Buka dashboard dari link GitHub.");
+}
+
+function doPost(e) {
+  try {
+    const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    ensureSheets_();
+
+    if (req.action === "login") {
+      const email = verifyGoogle_(req.idToken);
+      const team = readTeam_();
+      if (!isAdmin_(email) && !team.some(c => c.email === email)) return json_({ error: "not_member", email: email });
+      return json_({ session: makeSession_(email), email: email, days: SESSION_DAYS });
+    }
+
+    const email = readSession_(req.session);
+    const team = readTeam_();
+    const isAdmin = isAdmin_(email);
+    const me = team.find(c => c.email === email) || null;
+    if (!isAdmin && !me) return json_({ error: "not_member", email: email });
+    const ctx = { email: email, isAdmin: isAdmin, me: me, team: team };
+
+    switch (req.action) {
+      case "load":       return json_(load_(ctx, req));
+      case "photos":     return json_(photos_(req.ids));
+      case "saveEntry":  return json_(saveEntry_(ctx, req.entry || {}));
+      case "saveTarget": return json_(saveTarget_(ctx, req));
+      case "saveTeam":   return json_(saveTeam_(ctx, req.ccs || []));
+      case "savePhoto":  return json_(savePhoto_(ctx, req));
+      default:           return json_({ error: "unknown_action" });
+    }
+  } catch (err) {
+    const msg = String(err && err.message || err);
+    if (msg.indexOf("AUTH:") === 0) return json_({ error: "auth", detail: msg.slice(5) });
+    if (msg.indexOf("FORBIDDEN:") === 0) return json_({ error: "forbidden", detail: msg.slice(10) });
+    return json_({ error: "server", detail: msg });
+  }
+}
+
+/* ============================ LOGIN & SESI 90 HARI ============================ */
+
+function verifyGoogle_(token) {
+  if (!token) throw new Error("AUTH:no_token");
+  const res = UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error("AUTH:invalid");
+  const info = JSON.parse(res.getContentText());
+  if (info.aud !== GOOGLE_CLIENT_ID) throw new Error("AUTH:wrong_client");
+  if (String(info.email_verified) !== "true") throw new Error("AUTH:unverified");
+  if (Number(info.exp) * 1000 < Date.now()) throw new Error("AUTH:expired");
+  return lower_(info.email);
+}
+
+function secret_() {
+  const p = PropertiesService.getScriptProperties();
+  let s = p.getProperty("secret");
+  if (!s) { s = Utilities.getUuid() + Utilities.getUuid(); p.setProperty("secret", s); }
+  return s;
+}
+function sign_(payload) {
+  return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(payload, secret_()));
+}
+function makeSession_(email) {
+  const exp = Date.now() + SESSION_DAYS * 86400000;
+  const payload = Utilities.base64EncodeWebSafe(email + "|" + exp);
+  return payload + "." + sign_(payload);
+}
+function readSession_(tok) {
+  const parts = String(tok || "").split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error("AUTH:no_session");
+  if (sign_(parts[0]) !== parts[1]) throw new Error("AUTH:bad_session");
+  const raw = Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString();
+  const i = raw.lastIndexOf("|");
+  if (Date.now() > Number(raw.slice(i + 1))) throw new Error("AUTH:expired");
+  return lower_(raw.slice(0, i));
+}
+function isAdmin_(email) { return ADMIN_EMAILS.map(lower_).indexOf(email) >= 0; }
+
+/* ================================= BACA ================================= */
+
+function load_(ctx, req) {
+  const start = String(req.start || ""), end = String(req.end || "");
+  const targets = rows_(SH.target).filter(r => { const w = d_(r[3]); return w >= start && w <= end; })
+    .map(r => ({ cc: String(r[0]), brand: brand_(r[2]), week: d_(r[3]), target: Number(r[4]) || 0 }));
+  const entries = rows_(SH.db).filter(r => { const d = d_(r[1]); return d >= start && d <= end; }).map(entryFromRow_);
+  return {
+    version: VERSION, email: ctx.email, isAdmin: ctx.isAdmin, me: ctx.me ? ctx.me.id : "",
+    ccs: ctx.team.map(c => ({ id: c.id, name: c.name, jabatan: c.jabatan, brand: c.brand, email: c.email, photoVer: c.photoVer })),
+    targets: targets, entries: entries,
+    sheetUrl: ctx.isAdmin ? SpreadsheetApp.getActive().getUrl() : ""
+  };
+}
+
+function entryFromRow_(r) {
+  const split = (v, sep) => String(v || "").split(sep).map(x => x.trim()).filter(String);
+  return {
+    key: String(r[0]), date: d_(r[1]), cc: String(r[2]), brand: brand_(r[3]),
+    qty: Number(r[4]) || 0, fb: Number(r[5]) || 0, yt: Number(r[6]) || 0, shopee: Number(r[7]) || 0,
+    jenis: split(r[8], "+"), campaign: split(r[9], ","),
+    tugas: String(r[10] || ""), links: split(r[11], "\n"),
+    kendala: String(r[12] || ""), solusi: String(r[13] || ""),
+    lembur: Number(r[14]) || 0, by: String(r[15] || ""), updatedAt: iso_(r[16])
+  };
+}
+
+function readTeam_() {
+  return rows_(SH.team).filter(r => String(r[0]).trim() && String(r[1]).trim()).map(r => ({
+    id: String(r[0]).trim(), name: String(r[1]).trim(), jabatan: String(r[2] || "").trim(),
+    brand: brandList_(r[3]).join(", "), email: lower_(r[4]), photoId: String(r[5] || ""), photoVer: String(r[6] || "")
+  }));
+}
+
+function photos_(ids) {
+  const want = Array.isArray(ids) ? ids.map(String) : null;
+  const out = {};
+  const ver = {};
+  readTeam_().forEach(c => { ver[c.id] = c.photoVer; });
+  rows_(SH.photo).forEach(r => {
+    const id = String(r[0]);
+    if (!want || want.indexOf(id) >= 0) out[id] = { v: ver[id] || "", data: String(r[1] || "") };
+  });
+  return { photos: out };
+}
+
+/* ================================= SIMPAN ================================= */
+
+function saveEntry_(ctx, e) {
+  const cc = String(e.cc || ""), date = String(e.date || ""), brand = brand_(e.brand);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("FORBIDDEN:bad_date");
+  if (BRAND_CODES.indexOf(brand) < 0) throw new Error("FORBIDDEN:bad_brand");
+  const m = ctx.team.find(c => c.id === cc);
+  if (!m) throw new Error("FORBIDDEN:unknown_member");
+  if (!ctx.isAdmin && (!ctx.me || ctx.me.id !== cc)) throw new Error("FORBIDDEN:not_owner");
+  if (!ctx.isAdmin && brandsOf_(m).indexOf(brand) < 0) throw new Error("FORBIDDEN:brand_not_assigned");
+
+  const role = roleOf_(m.jabatan);
+  const n = v => Math.max(0, Math.round(Number(v) || 0));
+  const arr = v => Array.isArray(v) ? v.map(String) : [];
+  const fb = role === "admin" ? n(e.fb) : 0, yt = role === "admin" ? n(e.yt) : 0, sp = role === "admin" ? n(e.shopee) : 0;
+  const qty = role === "admin" ? fb + yt + sp : n(e.qty);
+  const row = [
+    cc + "_" + date + "_" + brand, date, cc, brand, qty, fb, yt, sp,
+    role === "dg" ? arr(e.jenis).join(" + ") : "", role === "dg" ? arr(e.campaign).join(", ") : "",
+    String(e.tugas || "").slice(0, 5000),
+    arr(e.links).filter(l => /^https?:\/\//i.test(l)).slice(0, 20).join("\n"),
+    String(e.kendala || "").slice(0, 2000), String(e.solusi || "").slice(0, 2000),
+    Math.max(0, Number(e.lembur) || 0), ctx.email,
+    Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss")
+  ];
+  withLock_(() => {
+    upsert_(SH.db, r => String(r[0]) === row[0], row);
+    rebuildPerson_(m);
+    markDirty_();
+    maybeRebuildAll_();
+  });
+  return { ok: true, updatedAt: new Date().toISOString() };
+}
+
+function saveTarget_(ctx, req) {
+  if (!ctx.isAdmin) throw new Error("FORBIDDEN:admin_only");
+  const cc = String(req.cc || ""), week = String(req.week || ""), brand = brand_(req.brand);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) throw new Error("FORBIDDEN:bad_week");
+  if (BRAND_CODES.indexOf(brand) < 0) throw new Error("FORBIDDEN:bad_brand");
+  const m = ctx.team.find(c => c.id === cc);
+  if (!m) throw new Error("FORBIDDEN:unknown_member");
+  const row = [cc, m.name, brand, week, Math.max(0, Number(req.target) || 0)];
+  withLock_(() => upsert_(SH.target, r => String(r[0]) === cc && brand_(r[2]) === brand && d_(r[3]) === week, row));
+  return { ok: true };
+}
+
+function saveTeam_(ctx, ccs) {
+  if (!ctx.isAdmin) throw new Error("FORBIDDEN:admin_only");
+  const old = {};
+  ctx.team.forEach(c => { old[c.id] = c; });
+  const seen = {};
+  const rows = ccs.filter(c => c && c.id && c.name && !seen[c.id] && (seen[c.id] = true)).map(c => {
+    const o = old[String(c.id)] || {};
+    return [String(c.id), String(c.name).trim(), String(c.jabatan || "").trim(), brandList_(c.brand).join(", "), lower_(c.email), o.photoId || "", o.photoVer || ""];
+  });
+  withLock_(() => {
+    const sh = sheet_(SH.team);
+    const last = sh.getLastRow();
+    if (last > 1) sh.getRange(2, 1, last - 1, SH.team.head.length).clearContent();
+    if (rows.length) sh.getRange(2, 1, rows.length, SH.team.head.length).setValues(rows);
+    rapikan_();
+  });
+  return { ok: true };
+}
+
+function savePhoto_(ctx, req) {
+  const cc = String(req.cc || "");
+  const m = ctx.team.find(c => c.id === cc);
+  if (!m) throw new Error("FORBIDDEN:unknown_member");
+  if (!ctx.isAdmin && (!ctx.me || ctx.me.id !== cc)) throw new Error("FORBIDDEN:not_owner");
+  const thumb = String(req.thumb || "");
+  if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(thumb) || thumb.length > 49000) throw new Error("FORBIDDEN:bad_photo");
+
+  let fileId = m.photoId;
+  try {
+    const full = String(req.full || "");
+    if (/^data:image\/jpeg;base64,/.test(full)) {
+      const blob = Utilities.newBlob(Utilities.base64Decode(full.split(",")[1]), "image/jpeg", m.name + ".jpg");
+      const file = photoFolder_().createFile(blob);
+      if (m.photoId) { try { DriveApp.getFileById(m.photoId).setTrashed(true); } catch (x) { } }
+      fileId = file.getId();
+    }
+  } catch (x) { /* Drive belum diizinkan: thumbnail tetap tersimpan */ }
+
+  const ver = String(Date.now());
+  withLock_(() => {
+    upsert_(SH.photo, r => String(r[0]) === cc, [cc, thumb]);
+    const sh = sheet_(SH.team);
+    const data = rows_(SH.team);
+    for (let i = 0; i < data.length; i++) {
+      if (String(data[i][0]).trim() === cc) { sh.getRange(i + 2, 6, 1, 2).setValues([[fileId || "", ver]]); break; }
+    }
+  });
+  return { ok: true, v: ver };
+}
+
+function photoFolder_() {
+  const name = "Daily Report Creative - Foto";
+  const it = DriveApp.getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+/* ======================= MERAPIKAN GOOGLE SHEETS ======================= */
+
+function rapikan_() {
+  const team = readTeam_();
+  const db = rows_(SH.db);
+  const ss = SpreadsheetApp.getActive();
+  const keep = {};
+  team.forEach(m => { keep[m.id] = true; rebuildPerson_(m, db); });
+  ss.getSheets().forEach(sh => {
+    const id = metaId_(sh);
+    if (id && !keep[id]) ss.deleteSheet(sh);
+  });
+  rebuildAll_(team, db);
+  reorder_(team);
+  PropertiesService.getScriptProperties().setProperty("dirty", "0");
+}
+
+function markDirty_() { PropertiesService.getScriptProperties().setProperty("dirty", "1"); }
+
+function maybeRebuildAll_() {
+  const p = PropertiesService.getScriptProperties();
+  const last = Number(p.getProperty("lastAll") || 0);
+  if (Date.now() - last > 3 * 60000) rebuildAll_();
+}
+
+function metaId_(sh) {
+  const md = sh.getDeveloperMetadata();
+  for (let i = 0; i < md.length; i++) if (md[i].getKey() === "cc") return md[i].getValue();
+  return "";
+}
+
+function personSheet_(m) {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheets().find(s => metaId_(s) === m.id);
+  const want = safeName_(m.name);
+  if (!sh) {
+    sh = ss.insertSheet(uniqueName_(want));
+    sh.addDeveloperMetadata("cc", m.id);
+  } else if (sh.getName() !== want && !ss.getSheetByName(want)) {
+    sh.setName(want);
+  }
+  return sh;
+}
+
+function safeName_(s) {
+  const n = String(s || "Tanpa nama").replace(/[\[\]\*\?\/\\:]/g, " ").trim().slice(0, 90);
+  const reserved = [SH.team.name, SH.target.name, SH.db.name, SH.photo.name, ALL_NAME];
+  return reserved.indexOf(n) >= 0 ? n + " (orang)" : n;
+}
+function uniqueName_(n) {
+  const ss = SpreadsheetApp.getActive();
+  let x = n, k = 2;
+  while (ss.getSheetByName(x)) x = n + " " + (k++);
+  return x;
+}
+
+function dateCell_(s) { return Utilities.parseDate(s, TZ, "yyyy-MM-dd"); }
+
+function linkRich_(text) {
+  const links = String(text || "").split("\n").map(x => x.trim()).filter(String);
+  const b = SpreadsheetApp.newRichTextValue().setText(links.join("\n"));
+  let pos = 0;
+  links.forEach(l => { if (/^https?:\/\//i.test(l)) b.setLinkUrl(pos, pos + l.length, l); pos += l.length + 1; });
+  return b.build();
+}
+
+/** Tab per orang: urut tanggal, dikelompokkan per bulan, link bisa diklik. */
+function rebuildPerson_(m, db) {
+  const role = roleOf_(m.jabatan);
+  const rows = (db || rows_(SH.db)).filter(r => String(r[2]) === m.id)
+    .sort((a, b) => d_(a[1]).localeCompare(d_(b[1])) || BRAND_CODES.indexOf(brand_(a[3])) - BRAND_CODES.indexOf(brand_(b[3])));
+
+  let head = ["Tanggal", "Hari", "Brand"];
+  if (role === "admin") head = head.concat(["Facebook", "YouTube", "Shopee", "Total upload"]);
+  else if (role === "dg") head = head.concat(["Jumlah desain", "Jenis", "Desain campaign"]);
+  else head = head.concat(["Jumlah video"]);
+  head = head.concat(["Tugas harian", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"]);
+  const W = head.length, iLink = head.indexOf("Link hasil kerja"), iKend = head.indexOf("Kendala");
+
+  const vals = [], bgs = [], fcs = [], fws = [], monthRows = [];
+  let lastMonth = "", lastDate = "", band = false, tot = 0, ot = 0;
+  rows.forEach(r => {
+    const d = d_(r[1]), mo = d.slice(0, 7);
+    if (mo !== lastMonth) {
+      lastMonth = mo;
+      const line = new Array(W).fill("");
+      line[0] = BULAN[Number(mo.slice(5)) - 1] + " " + mo.slice(0, 4);
+      vals.push(line); bgs.push(new Array(W).fill(C_BLUE)); fcs.push(new Array(W).fill("#ffffff")); fws.push(new Array(W).fill("bold"));
+      monthRows.push(vals.length);
+    }
+    if (d !== lastDate) { band = !band; lastDate = d; }
+    const p = d.split("-").map(Number);
+    const line = [dateCell_(d), HARI[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()], brand_(r[3])];
+    if (role === "admin") line.push(Number(r[5]) || 0, Number(r[6]) || 0, Number(r[7]) || 0, Number(r[4]) || 0);
+    else if (role === "dg") line.push(Number(r[4]) || 0, String(r[8] || ""), String(r[9] || ""));
+    else line.push(Number(r[4]) || 0);
+    line.push(String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), Number(r[14]) || 0, String(r[16] || ""));
+    vals.push(line);
+    const bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
+    if (r[12]) bg[iKend] = C_WARN;
+    bgs.push(bg); fcs.push(new Array(W).fill("#23252f")); fws.push(new Array(W).fill("normal"));
+    tot += Number(r[4]) || 0; ot += Number(r[14]) || 0;
+  });
+
+  const sh = personSheet_(m);
+  const all = sh.getRange(1, 1, Math.max(sh.getMaxRows(), 5), Math.max(sh.getMaxColumns(), W));
+  all.breakApart(); sh.clear();
+  sh.getRange(1, 1).setValue("DAILY REPORT — " + m.name.toUpperCase()).setFontSize(14).setFontWeight("bold").setFontColor(C_BLUE);
+  sh.getRange(2, 1).setValue((m.jabatan || "-") + "   ·   Brand: " + (brandsOf_(m).join(", ")) + "   ·   " + (m.email || "-"));
+  sh.getRange(3, 1).setValue("Total: " + tot + " " + (role === "admin" ? "upload" : role === "dg" ? "desain" : "video") + "   ·   Lembur: " + ot + " jam   ·   Diperbarui otomatis " + Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy HH:mm"))
+    .setFontColor("#6a6c78");
+  sh.getRange(4, 1, 1, W).setValues([head]).setFontWeight("bold").setBackground("#23252f").setFontColor("#ffffff").setVerticalAlignment("middle").setWrap(true);
+  sh.setRowHeight(4, 32);
+  if (vals.length) {
+    const rg = sh.getRange(5, 1, vals.length, W);
+    rg.setValues(vals).setBackgrounds(bgs).setFontColors(fcs).setFontWeights(fws).setVerticalAlignment("top").setWrap(true);
+    sh.getRange(5, iLink + 1, vals.length, 1).setRichTextValues(vals.map((v, i) => [monthRows.indexOf(i + 1) >= 0 ? SpreadsheetApp.newRichTextValue().setText(v[iLink]).build() : linkRich_(v[iLink])]));
+    sh.getRange(5, 1, vals.length, 1).setNumberFormat("dd/mm/yyyy");
+    monthRows.forEach(i => sh.getRange(4 + i, 1, 1, W).merge());
+  }
+  sh.setFrozenRows(4);
+  const widths = { "Tanggal": 92, "Hari": 70, "Brand": 60, "Jenis": 120, "Desain campaign": 180, "Tugas harian": 320, "Link hasil kerja": 300, "Kendala": 200, "Solusi": 200, "Diperbarui": 135 };
+  head.forEach((h, i) => sh.setColumnWidth(i + 1, widths[h] || 88));
+}
+
+/** Tab "Semua Report": dikelompokkan per nama, urut tanggal. */
+function rebuildAll_(team, db) {
+  team = team || readTeam_();
+  db = db || rows_(SH.db);
+  const head = ["Tanggal", "Hari", "Nama", "Jabatan", "Brand", "Jumlah", "Satuan", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
+                "Tugas harian", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"];
+  const W = head.length, iLink = 13, iKend = 14;
+  const vals = [], bgs = [], fcs = [], fws = [], groupRows = [];
+  team.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(m => {
+    const role = roleOf_(m.jabatan);
+    const rows = db.filter(r => String(r[2]) === m.id)
+      .sort((a, b) => d_(a[1]).localeCompare(d_(b[1])) || BRAND_CODES.indexOf(brand_(a[3])) - BRAND_CODES.indexOf(brand_(b[3])));
+    const line = new Array(W).fill("");
+    line[0] = m.name.toUpperCase() + "   ·   " + (m.jabatan || "-") + "   ·   " + brandsOf_(m).join(", ") + "   ·   " + rows.length + " report";
+    vals.push(line); bgs.push(new Array(W).fill(C_BLUE)); fcs.push(new Array(W).fill("#ffffff")); fws.push(new Array(W).fill("bold"));
+    groupRows.push(vals.length);
+    let lastDate = "", band = false;
+    rows.forEach(r => {
+      const d = d_(r[1]);
+      if (d !== lastDate) { band = !band; lastDate = d; }
+      const p = d.split("-").map(Number);
+      vals.push([dateCell_(d), HARI[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()], m.name, m.jabatan, brand_(r[3]),
+        Number(r[4]) || 0, role === "admin" ? "upload" : role === "dg" ? "desain" : "video",
+        role === "admin" ? Number(r[5]) || 0 : "", role === "admin" ? Number(r[6]) || 0 : "", role === "admin" ? Number(r[7]) || 0 : "",
+        String(r[8] || ""), String(r[9] || ""), String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""),
+        Number(r[14]) || 0, String(r[16] || "")]);
+      const bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
+      if (r[12]) bg[iKend] = C_WARN;
+      bgs.push(bg); fcs.push(new Array(W).fill("#23252f")); fws.push(new Array(W).fill("normal"));
+    });
+  });
+
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(ALL_NAME) || ss.insertSheet(ALL_NAME);
+  sh.getRange(1, 1, Math.max(sh.getMaxRows(), 3), Math.max(sh.getMaxColumns(), W)).breakApart();
+  sh.clear();
+  sh.getRange(1, 1).setValue("SEMUA REPORT — DIVISI CREATIVE INDOGROUP").setFontSize(14).setFontWeight("bold").setFontColor(C_BLUE);
+  sh.getRange(2, 1).setValue("Dikelompokkan per nama, urut tanggal. Diperbarui otomatis " + Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy HH:mm")).setFontColor("#6a6c78");
+  sh.getRange(3, 1, 1, W).setValues([head]).setFontWeight("bold").setBackground("#23252f").setFontColor("#ffffff").setVerticalAlignment("middle").setWrap(true);
+  sh.setRowHeight(3, 32);
+  if (vals.length) {
+    sh.getRange(4, 1, vals.length, W).setValues(vals).setBackgrounds(bgs).setFontColors(fcs).setFontWeights(fws).setVerticalAlignment("top").setWrap(true);
+    sh.getRange(4, iLink + 1, vals.length, 1).setRichTextValues(vals.map((v, i) => [groupRows.indexOf(i + 1) >= 0 ? SpreadsheetApp.newRichTextValue().setText(v[iLink]).build() : linkRich_(v[iLink])]));
+    sh.getRange(4, 1, vals.length, 1).setNumberFormat("dd/mm/yyyy");
+    groupRows.forEach(i => sh.getRange(3 + i, 1, 1, W).merge());
+  }
+  sh.setFrozenRows(3);
+  const widths = [92, 70, 130, 120, 60, 70, 70, 80, 80, 80, 120, 170, 320, 300, 200, 200, 90, 135];
+  widths.forEach((w, i) => sh.setColumnWidth(i + 1, w));
+  PropertiesService.getScriptProperties().setProperty("lastAll", String(Date.now()));
+}
+
+function reorder_(team) {
+  const ss = SpreadsheetApp.getActive();
+  const order = [SH.team.name, SH.target.name, ALL_NAME];
+  let pos = 1;
+  const move = sh => { if (sh) { ss.setActiveSheet(sh); ss.moveActiveSheet(pos++); } };
+  order.forEach(n => move(ss.getSheetByName(n)));
+  (team || readTeam_()).slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(m => move(ss.getSheets().find(s => metaId_(s) === m.id)));
+  [SH.db, SH.photo].forEach(def => { const s = ss.getSheetByName(def.name); if (s && !s.isSheetHidden()) s.hideSheet(); });
+  const first = ss.getSheetByName(ALL_NAME) || ss.getSheetByName(SH.team.name);
+  if (first) ss.setActiveSheet(first);
+}
+
+/* ======================= STRUKTUR SHEET & MIGRASI ======================= */
+
+function ensureSheets_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty("ready") === VERSION) return;
+  withLock_(() => {
+    if (props.getProperty("ready") === VERSION) return;
+    const ss = SpreadsheetApp.getActive();
+    try { ss.setSpreadsheetTimeZone(TZ); } catch (x) { }
+    const oldTarget = ss.getSheetByName("Target Mingguan");
+    const oldReport = ss.getSheetByName("Report Harian");
+
+    Object.keys(SH).forEach(k => {
+      const def = SH[k];
+      const sh = sheet_(def);
+      sh.getRange(1, 1, 1, def.head.length).setValues([def.head]).setFontWeight("bold").setBackground("#23252f").setFontColor("#ffffff");
+      sh.setFrozenRows(1);
+      def.text.forEach(col => sh.getRange(1, col, sh.getMaxRows(), 1).setNumberFormat("@"));
+    });
+    const team = sheet_(SH.team);
+    team.getRange(2, 3, team.getMaxRows() - 1, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(JABATAN, true).setAllowInvalid(true).build());
+    team.getRange(1, 4).setNote("Kode brand dipisah koma, contoh: OLV, KNG\nPilihan: " + BRAND_CODES.join(", ") + "\nKosongkan = boleh semua brand.");
+
+    const members = {};
+    readTeam_().forEach(m => { members[m.id] = m; });
+    const firstBrand = id => (members[id] ? brandsOf_(members[id])[0] : "OLV");
+
+    if (oldTarget && rows_(SH.target).length === 0) {
+      const last = oldTarget.getLastRow();
+      if (last > 1) {
+        const rows = oldTarget.getRange(2, 1, last - 1, 4).getValues().filter(r => String(r[0]).trim())
+          .map(r => [String(r[0]), String(r[1]), firstBrand(String(r[0])), d_(r[2]), Number(r[3]) || 0]);
+        if (rows.length) sheet_(SH.target).getRange(2, 1, rows.length, 5).setValues(rows);
+      }
+      oldTarget.setName(uniqueName_("Target Mingguan (lama)")); oldTarget.hideSheet();
+    }
+    if (oldReport && rows_(SH.db).length === 0) {
+      const last = oldReport.getLastRow();
+      if (last > 1) {
+        const rows = oldReport.getRange(2, 1, last - 1, 18).getValues().filter(r => String(r[3]).trim() && d_(r[1])).map(r => {
+          const id = String(r[3]), d = d_(r[1]);
+          const b = brandList_(r[8])[0] || firstBrand(id);
+          return [id + "_" + d + "_" + b, d, id, b, Number(r[6]) || 0, 0, 0, 0, String(r[9] || ""), String(r[10] || ""),
+            String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), String(r[14] || ""), Number(r[15]) || 0, String(r[16] || ""),
+            r[17] instanceof Date ? Utilities.formatDate(r[17], TZ, "yyyy-MM-dd HH:mm:ss") : String(r[17] || "")];
+        });
+        if (rows.length) sheet_(SH.db).getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+      }
+      oldReport.setName(uniqueName_("Report Harian (lama)")); oldReport.hideSheet();
+    }
+    if (readTeam_().length) rapikan_(); else reorder_([]);
+    props.setProperty("ready", VERSION);
+  });
+}
+
+/* ================================ BANTUAN ================================ */
+
+function roleOf_(j) {
+  j = String(j || "");
+  if (/desain|design|graf/i.test(j)) return "dg";
+  if (/admin/i.test(j)) return "admin";
+  return "cc";
+}
+function brand_(v) { const s = String(v == null ? "" : v).trim().toUpperCase(); return s === "77.0" ? "77" : s; }
+function brandList_(v) {
+  const out = [];
+  String(v || "").split(/[,\/;+]/).map(brand_).forEach(b => { if (BRAND_CODES.indexOf(b) >= 0 && out.indexOf(b) < 0) out.push(b); });
+  return out.sort((a, b) => BRAND_CODES.indexOf(a) - BRAND_CODES.indexOf(b));
+}
+function brandsOf_(m) { const l = brandList_(m.brand); return l.length ? l : BRAND_CODES.slice(); }
+
+function sheet_(def) {
+  const ss = SpreadsheetApp.getActive();
+  return ss.getSheetByName(def.name) || ss.insertSheet(def.name);
+}
+function rows_(def) {
+  const sh = sheet_(def);
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, def.head.length).getValues();
+}
+function upsert_(def, match, row) {
+  const sh = sheet_(def);
+  const data = rows_(def);
+  for (let i = 0; i < data.length; i++) {
+    if (match(data[i])) { sh.getRange(i + 2, 1, 1, row.length).setValues([row]); return; }
+  }
+  sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try { fn(); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+}
+function d_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, "yyyy-MM-dd");
+  return String(v || "").trim().slice(0, 10);
+}
+function iso_(v) {
+  if (!v) return "";
+  if (v instanceof Date) return v.toISOString();
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) return new Date(s.replace(" ", "T") + "+07:00").toISOString();
+  return s;
+}
+function lower_(v) { return String(v || "").trim().toLowerCase(); }
+function json_(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
+
+/* ====================== DIJALANKAN DARI EDITOR / MENU ====================== */
+
+/** Jalankan SEKALI dari editor (pilih "setupAwal" lalu ▶ Run) setiap kali Code.gs diperbarui. */
+function setupAwal() {
+  PropertiesService.getScriptProperties().deleteProperty("ready");
+  ensureSheets_();
+  photoFolder_();
+  UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?id_token=x", { muteHttpExceptions: true });
+  ScriptApp.getProjectTriggers().forEach(t => { if (t.getHandlerFunction() === "autoRapikan") ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger("autoRapikan").timeBased().everyMinutes(5).create();
+  try { SpreadsheetApp.getActive().toast("Siap (" + VERSION + "). Lanjutkan: Deploy → Manage deployments → New version.", "Daily Report", 10); } catch (x) { }
+}
+
+/** Dijalankan otomatis tiap 5 menit: merapikan tab "Semua Report" kalau ada isian baru. */
+function autoRapikan() {
+  if (PropertiesService.getScriptProperties().getProperty("dirty") !== "1") return;
+  withLock_(() => { rebuildAll_(); PropertiesService.getScriptProperties().setProperty("dirty", "0"); });
+}
+
+function rapikanSemua() {
+  withLock_(rapikan_);
+  try { SpreadsheetApp.getActive().toast("Semua sheet sudah dirapikan.", "Daily Report", 5); } catch (x) { }
+}
+
+/** Memaksa semua HP/laptop login Gmail ulang (misalnya kalau ada perangkat hilang). */
+function keluarkanSemuaPerangkat() {
+  PropertiesService.getScriptProperties().deleteProperty("secret");
+  try { SpreadsheetApp.getActive().toast("Semua perangkat harus login ulang.", "Daily Report", 5); } catch (x) { }
+}
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu("Daily Report")
+    .addItem("Rapikan semua sheet sekarang", "rapikanSemua")
+    .addSeparator()
+    .addItem("Keluarkan semua perangkat (wajib login ulang)", "keluarkanSemuaPerangkat")
+    .addToUi();
+}

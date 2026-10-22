@@ -4,264 +4,111 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Daily Report Creative Indogroup</title>
-<meta name="description" content="Daily report tim Creative Indogroup: kalender konten, target mingguan, lembur dan export Excel. Data tersimpan di Google Sheets.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232e3d8f'/%3E%3Crect x='7' y='9' width='18' height='16' rx='3' fill='none' stroke='white' stroke-width='2.4'/%3E%3Cpath d='M7 14h18M12 6v5M20 6v5' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta name="description" content="Daily report tim Creative Indogroup: kalender konten per brand, target mingguan, lembur dan export Excel. Data tersimpan di Google Sheets.">
+<meta name="theme-color" content="#5a6fa7">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235a6fa7'/%3E%3Crect x='7' y='9' width='18' height='16' rx='3' fill='none' stroke='white' stroke-width='2.4'/%3E%3Cpath d='M7 14h18M12 6v5M20 6v5' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
-<style>
-html{color-scheme:light}
-body{margin:0;font-size:14px;-webkit-text-size-adjust:100%}
-img{max-width:100%}
-[hidden]{display:none!important}
-
-/* Layout: header + pilih CC, 3 angka utama, kalender dengan kolom total mingguan, panel isi harian */
-:root{
-  --bg:#f2f3f7; --surface:#ffffff; --sunk:#e9ebf2; --ink:#1a1d2b; --muted:#5b6176; --line:#dcdfe8;
-  --indigo:#2e3d8f; --indigo-soft:#e3e7f8; --soga:#9a5524; --soga-soft:#f5e8dc;
-  --ok:#2c7a4c; --ok-soft:#ddf1e5; --warn:#a36d0b; --warn-soft:#fbefd6; --bad:#b0332b;
-  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
-  --body:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
-}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#11131b; --surface:#191c27; --sunk:#222636; --ink:#e7e9f1; --muted:#9ba1b6; --line:#2b2f40;
-  --indigo:#93a2f2; --indigo-soft:#262d52; --soga:#dc9b65; --soga-soft:#3a2a1d;
-  --ok:#5ec48c; --ok-soft:#1d3528; --warn:#e3b24c; --warn-soft:#3a2f17; --bad:#f07b6f; color-scheme:dark}}
-:root[data-theme="dark"]{
-  --bg:#11131b; --surface:#191c27; --sunk:#222636; --ink:#e7e9f1; --muted:#9ba1b6; --line:#2b2f40;
-  --indigo:#93a2f2; --indigo-soft:#262d52; --soga:#dc9b65; --soga-soft:#3a2a1d;
-  --ok:#5ec48c; --ok-soft:#1d3528; --warn:#e3b24c; --warn-soft:#3a2f17; --bad:#f07b6f; color-scheme:dark}
-*{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.5}
-.wrap{max-width:1180px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:16px}
-h1,h2{font-family:var(--display);margin:0;text-wrap:balance}
-button,input,select,textarea{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--indigo);outline-offset:2px}
-.num{font-variant-numeric:tabular-nums}
-
-.top{position:relative;border-radius:16px;overflow:hidden;background:#2e3d8f;color:#fff;padding:18px 20px;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;justify-content:space-between}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .top{background:#232c62}}
-:root[data-theme="dark"] .top{background:#232c62}
-.top::after{content:"";position:absolute;inset:0;opacity:.13;pointer-events:none;
-  background-image:radial-gradient(ellipse 9px 14px at 50% 0,#fff 98%,transparent 100%),radial-gradient(ellipse 9px 14px at 50% 100%,#fff 98%,transparent 100%),radial-gradient(ellipse 14px 9px at 0 50%,#fff 98%,transparent 100%),radial-gradient(ellipse 14px 9px at 100% 50%,#fff 98%,transparent 100%);
-  background-size:36px 36px;-webkit-mask-image:linear-gradient(90deg,transparent 35%,#000);mask-image:linear-gradient(90deg,transparent 35%,#000)}
-.top > *{position:relative;z-index:1}
-.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.82;font-weight:600}
-.top h1{font-size:clamp(22px,3.4vw,30px);font-weight:800;line-height:1.1;margin-top:4px}
-.ctrls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.ctrls select{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:10px;padding:7px 10px;font-weight:600;max-width:100%}
-.ctrls select option{color:#1a1d2b;background:#fff}
-.xbtn{background:#fff;color:#2e3d8f;border:0;border-radius:10px;padding:7px 12px;font-weight:700;cursor:pointer}
-.xbtn:disabled{opacity:.6;cursor:default}
-.mnav{display:flex;align-items:center;gap:4px}
-.mnav button{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;border-radius:10px;padding:6px 11px;cursor:pointer;font-weight:700}
-.mnav span{font-family:var(--display);font-weight:600;font-size:17px;min-width:136px;text-align:center}
-
-.stats{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px}
-@media (max-width:700px){.stats{grid-template-columns:1fr 1fr}.stats .wk{grid-column:1/-1}}
-.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:grid;gap:4px;align-content:start}
-.stat .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
-.stat .v{font-family:var(--display);font-size:34px;font-weight:800;line-height:1.05}
-.stat .v small{font-size:16px;font-weight:600;color:var(--muted)}
-.stat .s{font-size:12.5px;color:var(--muted)}
-.stat.ot .v{color:var(--soga)}
-.prog{height:10px;border-radius:6px;background:var(--sunk);overflow:hidden;margin-top:6px}
-.prog i{display:block;height:100%;border-radius:6px;background:var(--indigo)}
-.prog.done i{background:var(--ok)}
-
-.main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;align-items:start}
-@media (max-width:900px){.main{grid-template-columns:minmax(0,1fr)}}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px;min-width:0}
-.panel h2{font-size:17px;font-weight:600}
-.phead{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;justify-content:space-between}
-.sub{color:var(--muted);font-size:12.5px}
-
-.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) minmax(54px,.9fr);gap:5px}
-.cal .h{font-size:10.5px;text-align:center;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding-bottom:2px}
-.cell{min-height:64px;border-radius:9px;border:1px solid var(--line);background:var(--surface);cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;padding:5px 6px;text-align:left;min-width:0}
-.cell .n{font-size:11.5px;font-weight:600;color:var(--muted)}
-.cell .vid{font-family:var(--mono);font-weight:700;font-size:17px;line-height:1}
-.cell .ot{font-size:10.5px;font-weight:700;color:var(--soga);font-family:var(--mono)}
-.cell.has{background:var(--indigo-soft)}
-.cell.hit{background:var(--ok-soft)} .cell.hit .vid{color:var(--ok)}
-.cell.sun{background:var(--sunk)}
-.cell.out{opacity:.45}
-.cell.sel{outline:2px solid var(--ink);outline-offset:1px}
-.cell.today .n{color:var(--indigo);font-weight:800}
-.wk{border-radius:9px;background:var(--sunk);padding:5px 6px;display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0}
-.wk b{font-family:var(--mono);font-size:13px;line-height:1}
-.wk span{font-size:10px;color:var(--muted)}
-.wk .bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
-.wk .bar i{display:block;height:100%;background:var(--indigo)}
-.wk.done .bar i{background:var(--ok)} .wk.done b{color:var(--ok)}
-@media (max-width:520px){.cell{min-height:52px;padding:4px}.cell .vid{font-size:14px}.cal{gap:3px;grid-template-columns:repeat(7,minmax(0,1fr)) 44px}.wk span{display:none}}
-.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:var(--muted)}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-
-.dayname{font-family:var(--display);font-weight:600;font-size:18px}
-.field{display:grid;gap:5px}
-.lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
-.stepper{display:flex;align-items:stretch;gap:6px}
-.stepper button{width:44px;border-radius:10px;border:1px solid var(--line);background:var(--sunk);font-size:20px;font-weight:700;cursor:pointer}
-.stepper input{flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:24px;font-weight:700;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:6px}
-input[type=number],input[type=text],textarea{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px 10px;min-width:0;width:100%}
-textarea{resize:vertical;min-height:84px}
-.btn{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;background:var(--indigo);color:var(--surface)}
-.btn.ghost{background:transparent;color:var(--indigo);border:1px solid var(--line)}
-.btn:disabled{opacity:.5;cursor:default}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.hint{font-size:12px;color:var(--muted)}
-.empty{color:var(--muted);text-align:center;padding:16px;border:1px dashed var(--line);border-radius:11px;font-size:13px}
-.chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12.5px}
-.chip[aria-pressed="true"]{background:var(--indigo);border-color:var(--indigo);color:var(--surface)}
-.chip.camp[aria-pressed="true"]{background:var(--soga);border-color:var(--soga)}
-.dzone{display:grid;gap:12px;padding:12px;border-radius:12px;background:var(--sunk)}
-.dzone input[type=text]{max-width:220px}
-.tagrow{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px}
-.tg{font-size:11px;font-weight:700;padding:1px 7px;border-radius:6px;background:var(--indigo-soft);color:var(--indigo)}
-.tg.c{background:var(--soga-soft);color:var(--soga)}
-.links{display:grid;gap:6px}
-.lk{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center}
-.lk a,.linkout a{font-size:12px;font-weight:700;color:var(--indigo);text-decoration:none;padding:6px 8px;border-radius:8px;border:1px solid var(--line);white-space:nowrap}
-.lk a:hover{background:var(--indigo-soft)}
-.btn.sm{padding:6px 10px;font-size:12.5px;justify-self:start}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media (max-width:520px){.two{grid-template-columns:1fr}}
-textarea.short{min-height:58px}
-.otsum{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
-.otsum b{color:var(--soga);font-family:var(--mono)}
-.linkout{display:flex;flex-wrap:wrap;gap:5px;grid-column:1/-1}
-.linkout a{padding:2px 7px;font-weight:600}
-.kdl{grid-column:1/-1;font-size:12px;background:var(--warn-soft);border-radius:7px;padding:5px 8px}
-.cell{position:relative}
-.cell .kdot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--bad)}
-.team{display:grid;gap:6px;list-style:none;margin:0;padding:0}
-.team li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
-.team .vv{font-family:var(--mono);font-weight:700}
-.team .oo{font-family:var(--mono);font-size:12px;color:var(--soga)}
-.team .tt{grid-column:1/-1;font-size:12px;color:var(--muted);white-space:pre-wrap}
-.saved{font-size:12px;color:var(--ok);font-weight:600}
-
-.profile{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr);background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.profile > div{padding:12px 16px;border-left:1px solid var(--line);min-width:0}
-.profile > div:first-child{border-left:0}
-.profile .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
-.profile .v{font-family:var(--display);font-weight:600;font-size:18px;line-height:1.25;overflow-wrap:anywhere}
-.profile .v.mute{color:var(--muted);font-family:var(--body);font-size:14px;font-weight:500}
-.profile .note{font-size:11px;color:var(--muted)}
-@media (max-width:640px){.profile{grid-template-columns:1fr}.profile > div{border-left:0;border-top:1px solid var(--line)}.profile > div:first-child{border-top:0}}
-details.set{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px}
-details.set summary{cursor:pointer;font-weight:700}
-.cclist{display:grid;gap:6px;margin-top:10px}
-.ccrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr) minmax(0,1.2fr) 74px;gap:8px;align-items:center}
-.cchead{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
-@media (max-width:640px){.ccrow{grid-template-columns:1fr 1fr}.cchead{display:none}}
-.x{border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:7px;padding:4px 8px;font-size:12px}
-.x:hover{color:var(--bad);background:var(--sunk)} .x.confirm{background:var(--bad);color:var(--surface)}
-.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:10px;font-weight:600;font-size:13px;z-index:20;max-width:calc(100% - 32px)}
-.notice{background:var(--warn-soft);color:var(--warn);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600}
-.profile.home{grid-template-columns:minmax(0,1fr) auto;align-items:center}
-.profile.home .v{font-size:24px;font-weight:800;letter-spacing:.02em}
-.rekapwrap{overflow-x:auto}
-table.rekap{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
-.rekap th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
-.rekap td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
-.rekap tr:last-child td{border-bottom:0}
-.rekap tfoot td{font-weight:700;background:var(--sunk)}
-.rekap .nm{border:0;background:none;padding:0;font-weight:700;color:var(--indigo);cursor:pointer;text-align:left}
-.rekap .nm:hover{text-decoration:underline}
-.rekap .jb{display:block;font-size:11.5px;color:var(--muted);font-weight:500}
-.rekap .n{font-family:var(--mono);font-weight:700;white-space:nowrap}
-.rekap .ot{color:var(--soga)}
-.rekap .kd{color:var(--bad)}
-.mini{display:grid;gap:4px;min-width:120px}
-.mini .bar{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
-.mini .bar i{display:block;height:100%;background:var(--indigo)}
-.mini.done .bar i{background:var(--ok)}
-.tin{display:inline-flex;align-items:center;gap:4px}
-.tin input{width:62px;padding:3px 6px;font-family:var(--mono);font-weight:700;text-align:center}
-.tgtbox{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--indigo-soft)}
-.tgtbox input{width:80px;font-family:var(--mono);font-weight:700;text-align:center}
-.tgtbox b{font-family:var(--mono)}
-.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:10px;font-weight:600;font-size:13px;z-index:20;max-width:calc(100% - 32px)}
-.notice{background:var(--warn-soft);color:var(--warn);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600}
-.userbox{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#fff;opacity:.95}
-.userbox button{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;border-radius:10px;padding:6px 10px;cursor:pointer;font-weight:600}
-.gate{min-height:70vh;display:grid;place-items:center}
-.gatebox{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px 24px;max-width:420px;width:100%;display:grid;gap:14px;text-align:center}
-.gatebox h2{font-size:22px}
-.gbtn{display:inline-flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer}
-.gbtn:hover{background:var(--sunk)}
-.ro{display:grid;gap:8px;padding:12px;border:1px dashed var(--line);border-radius:12px}
-.ro .k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
-.ro .t{white-space:pre-wrap}
-</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <div>
-      <div class="eyebrow">Divisi Creative Indogroup</div>
-      <h1>Daily Report Creative</h1>
-    </div>
-    <div class="ctrls" id="ctrls" hidden>
-      <select id="ccSel" aria-label="Pilih nama"></select>
-      <div class="mnav"><button id="prevM" aria-label="Bulan sebelumnya">‹</button><span id="monthLbl"></span><button id="nextM" aria-label="Bulan berikutnya">›</button></div>
-      <button class="xbtn" id="sheetBtn" hidden>Buka Google Sheets</button>
-      <button class="xbtn" id="exportBtn">Export Excel</button>
-      <div class="userbox"><span id="userEmail"></span><button id="logoutBtn">Keluar</button></div>
+<div class="page">
+  <header class="hero" id="hero">
+    <div class="hero-l">
+      <span class="hpill">Divisi Creative Indogroup</span>
+      <h1>Daily Report<br>Creative</h1>
+      <p class="hsub">Laporan harian tim konten, desain grafis dan admin.</p>
     </div>
   </header>
+
+  <nav class="nav" id="nav" hidden aria-label="Navigasi">
+    <select id="ccSel" class="pill sel" aria-label="Pilih nama"></select>
+    <div class="mnav">
+      <button class="pill icon" id="prevM" aria-label="Bulan sebelumnya">‹</button>
+      <span id="monthLbl" class="mlbl"></span>
+      <button class="pill icon" id="nextM" aria-label="Bulan berikutnya">›</button>
+    </div>
+    <select id="brandF" class="pill sel" aria-label="Filter brand"></select>
+    <span class="grow"></span>
+    <button class="pill" id="sheetBtn" hidden>Google Sheets</button>
+    <button class="pill" id="exportBtn">Export Excel</button>
+    <span class="who" id="userEmail"></span>
+    <button class="pill ghost" id="logoutBtn">Keluar</button>
+  </nav>
 
   <div id="notice" class="notice" hidden></div>
 
   <section class="gate" id="gate">
     <div class="gatebox">
       <h2 id="gateTitle">Masuk ke Daily Report</h2>
-      <p class="sub" id="gateText" style="margin:0;white-space:pre-line;text-align:left">Gunakan akun Gmail yang sudah didaftarkan atasan.</p>
-      <div id="gbtn" style="display:flex;justify-content:center;min-height:44px"></div>
+      <p class="sub" id="gateText">Gunakan akun Gmail yang sudah didaftarkan atasan. Cukup sekali, perangkat ini akan diingat selama 90 hari.</p>
+      <div id="gbtn" class="gbtn"></div>
     </div>
   </section>
 
-  <div id="app" hidden style="display:grid;gap:16px">
-    <section class="profile" id="profile" aria-label="Profil"></section>
-
-    <section class="stats" id="stats" aria-label="Ringkasan">
-      <div class="stat wk" id="stWeek"></div>
-      <div class="stat" id="stMonth"></div>
-      <div class="stat ot" id="stOt"></div>
-    </section>
-
-    <section class="panel" id="rekapPanel" aria-labelledby="hRekap">
-      <div class="phead"><h2 id="hRekap">Rekap report per nama</h2><span class="sub" id="rekapSub"></span></div>
-      <div class="rekapwrap"><table class="rekap" id="rekap"></table></div>
-    </section>
-
-    <div class="main">
-      <section class="panel" aria-labelledby="hCal">
-        <div class="phead"><h2 id="hCal">Kalender konten</h2><span class="sub" id="calSub"></span></div>
-        <div class="cal" id="cal"></div>
-        <div class="legend"><span><i style="background:var(--ok-soft);border:1px solid var(--ok)"></i>Capai target harian</span><span><i style="background:var(--indigo-soft)"></i>Ada isian</span><span style="color:var(--soga);font-weight:700">+2j</span><span>= lembur</span><span><i style="background:var(--bad);border-radius:50%"></i>Ada kendala</span></div>
+  <main id="app" hidden>
+    <!-- BERANDA -->
+    <div id="homeView">
+      <section class="sec">
+        <h2 class="stitle"><b>Rekap report</b> per nama</h2>
+        <p class="ssub" id="rekapSub"></p>
       </section>
-      <section class="panel" id="dayPanel" aria-live="polite"></section>
+      <section class="band">
+        <div class="people" id="people"></div>
+      </section>
     </div>
 
-    <details class="set" id="setBox" hidden>
+    <!-- HALAMAN PER ORANG -->
+    <div id="personView" hidden>
+      <section class="sec">
+        <h2 class="stitle"><b>Pilih</b> brand</h2>
+        <p class="ssub">Report diisi terpisah untuk setiap brand yang dikerjakan.</p>
+        <div class="tabs" id="brandTabs" role="tablist"></div>
+      </section>
+      <section class="stats" id="stats"></section>
+    </div>
+
+    <section class="sec">
+      <h2 class="stitle"><b>Kalender</b> konten</h2>
+      <p class="ssub" id="calSub"></p>
+      <div class="main">
+        <div class="card calcard">
+          <div class="cal" id="cal"></div>
+          <div class="legend">
+            <span><i class="lg hit"></i>Capai target harian</span>
+            <span><i class="lg has"></i>Ada isian</span>
+            <span><b class="otx">+2j</b> lembur</span>
+            <span><i class="lg kd"></i>Ada kendala</span>
+          </div>
+        </div>
+        <div class="card daycard" id="dayPanel" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h2 class="stitle"><b>Ringkasan</b> per minggu</h2>
+      <p class="ssub" id="sumSub"></p>
+      <div class="card tablecard"><div class="tablewrap"><table class="sum" id="sumTable"></table></div></div>
+    </section>
+
+    <details class="card setbox" id="setBox" hidden>
       <summary>Pengaturan atasan: anggota tim</summary>
+      <p class="hint">Atur nama, jabatan, brand yang dipegang dan Gmail setiap anggota. Foto diganti lewat halaman masing-masing orang. Perubahan juga bisa dilakukan langsung di sheet “Anggota”.</p>
       <div class="cclist" id="ccList"></div>
-      <form class="ccrow" id="ccForm" style="margin-top:10px" autocomplete="off">
+      <form class="ccrow newrow" id="ccForm" autocomplete="off">
         <input type="text" id="ccName" placeholder="Nama" aria-label="Nama baru">
-        <input type="text" id="ccJab" placeholder="Jabatan" aria-label="Jabatan">
-        <input type="text" id="ccBrand" placeholder="Brand (mis. OLV / 77)" aria-label="Brand">
-        <input type="text" id="ccEmail" placeholder="Gmail" aria-label="Gmail" inputmode="email">
-        <button class="btn" type="submit">Tambah</button>
+        <select id="ccJab" aria-label="Jabatan"><option>Content Creator</option><option>Desain Grafis</option><option>Admin</option></select>
+        <div class="bchips" id="ccBrand" data-val=""></div>
+        <input type="text" id="ccEmail" placeholder="nama@gmail.com" aria-label="Gmail" inputmode="email">
+        <button class="pbtn" type="submit">Tambah</button>
       </form>
-      <p class="hint" style="margin:8px 0 0">Setiap anggota login dengan Gmail yang didaftarkan di sini dan hanya bisa mengisi report miliknya sendiri. Daftar ini juga bisa diubah langsung di sheet “Anggota”. Jabatan yang mengandung kata “Desain” atau “Graphic” otomatis memakai form desain grafis.</p>
     </details>
-  </div>
+  </main>
+
+  <footer class="foot">Daily Report Creative · Divisi Creative Indogroup · <a href="privacy.html">Kebijakan privasi</a></footer>
 </div>
+<input type="file" id="photoIn" accept="image/*" hidden>
 <div class="toast" id="toast" hidden></div>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <script type="module" src="app.js"></script>
