@@ -1,7 +1,7 @@
 /**
- * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2)
+ * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2.1)
  *
- * Cara pasang / update: lihat PANDUAN.md bagian "Update ke versi 2".
+ * Cara pasang / update: lihat PANDUAN.md bagian "Update".
  * Ringkas: tempel seluruh isi file ini di Extensions → Apps Script, Save,
  * jalankan "setupAwal" sekali, lalu Deploy → Manage deployments → New version.
  */
@@ -23,20 +23,25 @@ const SESSION_DAYS = 90;
 // ================================================
 
 const TZ = "Asia/Jakarta";
-const VERSION = "v2.0";
+const VERSION = "v2.1";
 const BRAND_CODES = ["OLV", "KNG", "77", "MTR", "IDN", "RS", "TKS"];
 const BRAND_NAMES = { OLV: "Batik Oliver", KNG: "Kenangan Fashion", "77": "Batik 77", MTR: "Batik Menteri", IDN: "Batik Indonesia", RS: "Batik Rama Shinta", TKS: "Batik Taksaka" };
 const JABATAN = ["Content Creator", "Desain Grafis", "Admin"];
 const HARI = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"];
-const C_BLUE = "#5a6fa7", C_SOFT = "#e6eaf5", C_BAND = "#f4f6fb", C_WARN = "#fbefd6";
+const C_BLUE = "#5a6fa7", C_SOFT = "#e6eaf5", C_BAND = "#f4f6fb", C_WARN = "#fbefd6", C_ALPHA = "#f6dedc";
+const STATUS = ["Cuti", "Izin", "Sakit", "Alpha"];
+// nama lain yang dikenali saat brand ditulis manual di sheet "Anggota"
+const BRAND_ALIAS = [["OLV", /oliver|^olv$/], ["KNG", /kenangan|^kng$/], ["77", /^(batik\s*)?77$/], ["MTR", /menteri|^mtr$/],
+                     ["IDN", /indonesia|indo\s*group|^idn$/], ["RS", /rama\s*shinta|ramashinta|^rs$/], ["TKS", /taksaka|^tks$/]];
 
 const SH = {
   team:   { name: "Anggota", head: ["ID", "Nama", "Jabatan", "Brand", "Gmail", "Foto (Drive)", "Versi foto"], text: [1, 4, 5, 6] },
   target: { name: "Target", head: ["ID", "Nama", "Brand", "Minggu mulai (Senin)", "Target"], text: [1, 3, 4] },
   db:     { name: "_data", head: ["Kunci", "Tanggal", "ID", "Brand", "Jumlah", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
                                   "Tugas harian", "Link", "Kendala", "Solusi", "Lembur (jam)", "Diisi oleh", "Diperbarui"], text: [1, 2, 3, 4, 16, 17], hidden: true },
-  photo:  { name: "_foto", head: ["ID", "Thumbnail"], text: [1, 2], hidden: true }
+  photo:  { name: "_foto", head: ["ID", "Thumbnail", "Besar 1", "Besar 2", "Besar 3", "Besar 4"], text: [1, 2, 3, 4, 5, 6], hidden: true },
+  absen:  { name: "Kehadiran", head: ["ID", "Nama", "Tanggal", "Status", "Keterangan", "Diisi oleh", "Diperbarui"], text: [1, 3, 6, 7] }
 };
 const ALL_NAME = "Semua Report";
 
@@ -72,6 +77,8 @@ function doPost(e) {
       case "saveTarget": return json_(saveTarget_(ctx, req));
       case "saveTeam":   return json_(saveTeam_(ctx, req.ccs || []));
       case "savePhoto":  return json_(savePhoto_(ctx, req));
+      case "moveEntry":  return json_(moveEntry_(ctx, req));
+      case "saveAbsence": return json_(saveAbsence_(ctx, req));
       default:           return json_({ error: "unknown_action" });
     }
   } catch (err) {
@@ -127,10 +134,12 @@ function load_(ctx, req) {
   const targets = rows_(SH.target).filter(r => { const w = d_(r[3]); return w >= start && w <= end; })
     .map(r => ({ cc: String(r[0]), brand: brand_(r[2]), week: d_(r[3]), target: Number(r[4]) || 0 }));
   const entries = rows_(SH.db).filter(r => { const d = d_(r[1]); return d >= start && d <= end; }).map(entryFromRow_);
+  const absences = rows_(SH.absen).filter(r => { const d = d_(r[2]); return String(r[0]).trim() && d >= start && d <= end; })
+    .map(r => ({ cc: String(r[0]).trim(), date: d_(r[2]), status: String(r[3] || ""), note: String(r[4] || ""), by: String(r[5] || ""), updatedAt: iso_(r[6]) }));
   return {
     version: VERSION, email: ctx.email, isAdmin: ctx.isAdmin, me: ctx.me ? ctx.me.id : "",
     ccs: ctx.team.map(c => ({ id: c.id, name: c.name, jabatan: c.jabatan, brand: c.brand, email: c.email, photoVer: c.photoVer })),
-    targets: targets, entries: entries,
+    targets: targets, entries: entries, absences: absences,
     sheetUrl: ctx.isAdmin ? SpreadsheetApp.getActive().getUrl() : ""
   };
 }
@@ -161,7 +170,7 @@ function photos_(ids) {
   readTeam_().forEach(c => { ver[c.id] = c.photoVer; });
   rows_(SH.photo).forEach(r => {
     const id = String(r[0]);
-    if (!want || want.indexOf(id) >= 0) out[id] = { v: ver[id] || "", data: String(r[1] || "") };
+    if (!want || want.indexOf(id) >= 0) out[id] = { v: ver[id] || "", data: String(r[1] || ""), big: [r[2], r[3], r[4], r[5]].map(x => String(x || "")).join("") };
   });
   return { photos: out };
 }
@@ -175,9 +184,8 @@ function saveEntry_(ctx, e) {
   const m = ctx.team.find(c => c.id === cc);
   if (!m) throw new Error("FORBIDDEN:unknown_member");
   if (!ctx.isAdmin && (!ctx.me || ctx.me.id !== cc)) throw new Error("FORBIDDEN:not_owner");
-  if (!ctx.isAdmin && brandsOf_(m).indexOf(brand) < 0) throw new Error("FORBIDDEN:brand_not_assigned");
-
   const role = roleOf_(m.jabatan);
+  if (!ctx.isAdmin && role !== "dg" && brandsOf_(m).indexOf(brand) < 0) throw new Error("FORBIDDEN:brand_not_assigned");
   const n = v => Math.max(0, Math.round(Number(v) || 0));
   const arr = v => Array.isArray(v) ? v.map(String) : [];
   const fb = role === "admin" ? n(e.fb) : 0, yt = role === "admin" ? n(e.yt) : 0, sp = role === "admin" ? n(e.shopee) : 0;
@@ -226,6 +234,7 @@ function saveTeam_(ctx, ccs) {
     const last = sh.getLastRow();
     if (last > 1) sh.getRange(2, 1, last - 1, SH.team.head.length).clearContent();
     if (rows.length) sh.getRange(2, 1, rows.length, SH.team.head.length).setValues(rows);
+    fixMigrated_(readTeam_());
     rapikan_();
   });
   return { ok: true };
@@ -239,6 +248,9 @@ function savePhoto_(ctx, req) {
   const thumb = String(req.thumb || "");
   if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(thumb) || thumb.length > 49000) throw new Error("FORBIDDEN:bad_photo");
 
+  const big = String(req.big || "");
+  const chunks = ["", "", "", ""];
+  if (/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(big) && big.length <= 4 * 49000) for (let i = 0; i < 4; i++) chunks[i] = big.slice(i * 49000, (i + 1) * 49000);
   let fileId = m.photoId;
   try {
     const full = String(req.full || "");
@@ -252,7 +264,7 @@ function savePhoto_(ctx, req) {
 
   const ver = String(Date.now());
   withLock_(() => {
-    upsert_(SH.photo, r => String(r[0]) === cc, [cc, thumb]);
+    upsert_(SH.photo, r => String(r[0]) === cc, [cc, thumb].concat(chunks));
     const sh = sheet_(SH.team);
     const data = rows_(SH.team);
     for (let i = 0; i < data.length; i++) {
@@ -272,15 +284,15 @@ function photoFolder_() {
 
 function rapikan_() {
   const team = readTeam_();
-  const db = rows_(SH.db);
+  const db = rows_(SH.db), ab = rows_(SH.absen);
   const ss = SpreadsheetApp.getActive();
   const keep = {};
-  team.forEach(m => { keep[m.id] = true; rebuildPerson_(m, db); });
+  team.forEach(m => { keep[m.id] = true; rebuildPerson_(m, db, ab); });
   ss.getSheets().forEach(sh => {
     const id = metaId_(sh);
     if (id && !keep[id]) ss.deleteSheet(sh);
   });
-  rebuildAll_(team, db);
+  rebuildAll_(team, db, ab);
   reorder_(team);
   PropertiesService.getScriptProperties().setProperty("dirty", "0");
 }
@@ -314,7 +326,7 @@ function personSheet_(m) {
 
 function safeName_(s) {
   const n = String(s || "Tanpa nama").replace(/[\[\]\*\?\/\\:]/g, " ").trim().slice(0, 90);
-  const reserved = [SH.team.name, SH.target.name, SH.db.name, SH.photo.name, ALL_NAME];
+  const reserved = [SH.team.name, SH.target.name, SH.db.name, SH.photo.name, SH.absen.name, ALL_NAME];
   return reserved.indexOf(n) >= 0 ? n + " (orang)" : n;
 }
 function uniqueName_(n) {
@@ -334,23 +346,33 @@ function linkRich_(text) {
   return b.build();
 }
 
-/** Tab per orang: urut tanggal, dikelompokkan per bulan, link bisa diklik. */
-function rebuildPerson_(m, db) {
-  const role = roleOf_(m.jabatan);
-  const rows = (db || rows_(SH.db)).filter(r => String(r[2]) === m.id)
-    .sort((a, b) => d_(a[1]).localeCompare(d_(b[1])) || BRAND_CODES.indexOf(brand_(a[3])) - BRAND_CODES.indexOf(brand_(b[3])));
+/** Gabungkan report + kehadiran satu orang, urut tanggal. */
+function personItems_(m, db, ab) {
+  const items = [];
+  db.filter(r => String(r[2]) === m.id).forEach(r => items.push({ d: d_(r[1]), r: r }));
+  ab.filter(a => String(a[0]).trim() === m.id).forEach(a => items.push({ d: d_(a[2]), a: a }));
+  return items.sort((x, y) => x.d.localeCompare(y.d) || (x.a ? -1 : 0) - (y.a ? -1 : 0) ||
+    (x.r && y.r ? BRAND_CODES.indexOf(brand_(x.r[3])) - BRAND_CODES.indexOf(brand_(y.r[3])) : 0));
+}
+function hari_(d) { const p = d.split("-").map(Number); return HARI[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()]; }
 
-  let head = ["Tanggal", "Hari", "Brand"];
+/** Tab per orang: urut tanggal, dikelompokkan per bulan, link bisa diklik, kehadiran ikut tercatat. */
+function rebuildPerson_(m, db, ab) {
+  const role = roleOf_(m.jabatan);
+  const items = personItems_(m, db || rows_(SH.db), ab || rows_(SH.absen));
+
+  let head = ["Tanggal", "Hari", "Kehadiran", "Brand"];
   if (role === "admin") head = head.concat(["Facebook", "YouTube", "Shopee", "Total upload"]);
   else if (role === "dg") head = head.concat(["Jumlah desain", "Jenis", "Desain campaign"]);
   else head = head.concat(["Jumlah video"]);
-  head = head.concat(["Tugas harian", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"]);
-  const W = head.length, iLink = head.indexOf("Link hasil kerja"), iKend = head.indexOf("Kendala");
+  head = head.concat(["Tugas harian / keterangan", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"]);
+  const W = head.length, iLink = head.indexOf("Link hasil kerja"), iKend = head.indexOf("Kendala"), nRole = W - 10;
 
   const vals = [], bgs = [], fcs = [], fws = [], monthRows = [];
+  const cnt = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 };
   let lastMonth = "", lastDate = "", band = false, tot = 0, ot = 0;
-  rows.forEach(r => {
-    const d = d_(r[1]), mo = d.slice(0, 7);
+  items.forEach(it => {
+    const d = it.d, mo = d.slice(0, 7);
     if (mo !== lastMonth) {
       lastMonth = mo;
       const line = new Array(W).fill("");
@@ -359,68 +381,82 @@ function rebuildPerson_(m, db) {
       monthRows.push(vals.length);
     }
     if (d !== lastDate) { band = !band; lastDate = d; }
-    const p = d.split("-").map(Number);
-    const line = [dateCell_(d), HARI[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()], brand_(r[3])];
-    if (role === "admin") line.push(Number(r[5]) || 0, Number(r[6]) || 0, Number(r[7]) || 0, Number(r[4]) || 0);
-    else if (role === "dg") line.push(Number(r[4]) || 0, String(r[8] || ""), String(r[9] || ""));
-    else line.push(Number(r[4]) || 0);
-    line.push(String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), Number(r[14]) || 0, String(r[16] || ""));
-    vals.push(line);
-    const bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
-    if (r[12]) bg[iKend] = C_WARN;
-    bgs.push(bg); fcs.push(new Array(W).fill("#23252f")); fws.push(new Array(W).fill("normal"));
-    tot += Number(r[4]) || 0; ot += Number(r[14]) || 0;
+    let line, bg;
+    if (it.a) {
+      const a = it.a, st = String(a[3] || "");
+      line = [dateCell_(d), hari_(d), st.toUpperCase(), ""].concat(new Array(nRole).fill(""))
+        .concat([String(a[4] || ""), "", "", "", "", String(a[6] || "")]);
+      bg = new Array(W).fill(st === "Alpha" ? C_ALPHA : C_WARN);
+      if (cnt[st] !== undefined) cnt[st]++;
+    } else {
+      const r = it.r;
+      line = [dateCell_(d), hari_(d), "Hadir", brand_(r[3])];
+      if (role === "admin") line.push(Number(r[5]) || 0, Number(r[6]) || 0, Number(r[7]) || 0, Number(r[4]) || 0);
+      else if (role === "dg") line.push(Number(r[4]) || 0, String(r[8] || ""), String(r[9] || ""));
+      else line.push(Number(r[4]) || 0);
+      line.push(String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), Number(r[14]) || 0, String(r[16] || ""));
+      bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
+      if (r[12]) bg[iKend] = C_WARN;
+      tot += Number(r[4]) || 0; ot += Number(r[14]) || 0;
+    }
+    vals.push(line); bgs.push(bg); fcs.push(new Array(W).fill("#23252f")); fws.push(new Array(W).fill("normal"));
   });
 
   const sh = personSheet_(m);
-  const all = sh.getRange(1, 1, Math.max(sh.getMaxRows(), 5), Math.max(sh.getMaxColumns(), W));
-  all.breakApart(); sh.clear();
+  sh.getRange(1, 1, Math.max(sh.getMaxRows(), 5), Math.max(sh.getMaxColumns(), W)).breakApart();
+  sh.clear();
   sh.getRange(1, 1).setValue("DAILY REPORT — " + m.name.toUpperCase()).setFontSize(14).setFontWeight("bold").setFontColor(C_BLUE);
-  sh.getRange(2, 1).setValue((m.jabatan || "-") + "   ·   Brand: " + (brandsOf_(m).join(", ")) + "   ·   " + (m.email || "-"));
-  sh.getRange(3, 1).setValue("Total: " + tot + " " + (role === "admin" ? "upload" : role === "dg" ? "desain" : "video") + "   ·   Lembur: " + ot + " jam   ·   Diperbarui otomatis " + Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy HH:mm"))
-    .setFontColor("#6a6c78");
+  sh.getRange(2, 1).setValue((m.jabatan || "-") + "   ·   Brand: " + (role === "dg" ? "semua brand" + (brandList_(m.brand).length ? " (utama " + brandList_(m.brand).join(", ") + ")" : "") : brandsOf_(m).join(", ")) + "   ·   " + (m.email || "-"));
+  sh.getRange(3, 1).setValue("Total: " + tot + " " + (role === "admin" ? "upload" : role === "dg" ? "desain" : "video") + "   ·   Lembur: " + ot + " jam   ·   Cuti " + cnt.Cuti + " · Izin " + cnt.Izin + " · Sakit " + cnt.Sakit + " · Alpha " + cnt.Alpha +
+    "   ·   Diperbarui otomatis " + Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy HH:mm")).setFontColor("#6a6c78");
   sh.getRange(4, 1, 1, W).setValues([head]).setFontWeight("bold").setBackground("#23252f").setFontColor("#ffffff").setVerticalAlignment("middle").setWrap(true);
   sh.setRowHeight(4, 32);
   if (vals.length) {
-    const rg = sh.getRange(5, 1, vals.length, W);
-    rg.setValues(vals).setBackgrounds(bgs).setFontColors(fcs).setFontWeights(fws).setVerticalAlignment("top").setWrap(true);
+    sh.getRange(5, 1, vals.length, W).setValues(vals).setBackgrounds(bgs).setFontColors(fcs).setFontWeights(fws).setVerticalAlignment("top").setWrap(true);
     sh.getRange(5, iLink + 1, vals.length, 1).setRichTextValues(vals.map((v, i) => [monthRows.indexOf(i + 1) >= 0 ? SpreadsheetApp.newRichTextValue().setText(v[iLink]).build() : linkRich_(v[iLink])]));
     sh.getRange(5, 1, vals.length, 1).setNumberFormat("dd/mm/yyyy");
     monthRows.forEach(i => sh.getRange(4 + i, 1, 1, W).merge());
   }
   sh.setFrozenRows(4);
-  const widths = { "Tanggal": 92, "Hari": 70, "Brand": 60, "Jenis": 120, "Desain campaign": 180, "Tugas harian": 320, "Link hasil kerja": 300, "Kendala": 200, "Solusi": 200, "Diperbarui": 135 };
+  const widths = { "Tanggal": 92, "Hari": 70, "Kehadiran": 84, "Brand": 60, "Jenis": 120, "Desain campaign": 180, "Tugas harian / keterangan": 320, "Link hasil kerja": 300, "Kendala": 200, "Solusi": 200, "Diperbarui": 135 };
   head.forEach((h, i) => sh.setColumnWidth(i + 1, widths[h] || 88));
 }
 
 /** Tab "Semua Report": dikelompokkan per nama, urut tanggal. */
-function rebuildAll_(team, db) {
+function rebuildAll_(team, db, ab) {
   team = team || readTeam_();
   db = db || rows_(SH.db);
-  const head = ["Tanggal", "Hari", "Nama", "Jabatan", "Brand", "Jumlah", "Satuan", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
-                "Tugas harian", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"];
-  const W = head.length, iLink = 13, iKend = 14;
+  ab = ab || rows_(SH.absen);
+  const head = ["Tanggal", "Hari", "Nama", "Jabatan", "Kehadiran", "Brand", "Jumlah", "Satuan", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
+                "Tugas harian / keterangan", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Diperbarui"];
+  const W = head.length, iLink = 14, iKend = 15;
   const vals = [], bgs = [], fcs = [], fws = [], groupRows = [];
   team.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(m => {
     const role = roleOf_(m.jabatan);
-    const rows = db.filter(r => String(r[2]) === m.id)
-      .sort((a, b) => d_(a[1]).localeCompare(d_(b[1])) || BRAND_CODES.indexOf(brand_(a[3])) - BRAND_CODES.indexOf(brand_(b[3])));
-    const line = new Array(W).fill("");
-    line[0] = m.name.toUpperCase() + "   ·   " + (m.jabatan || "-") + "   ·   " + brandsOf_(m).join(", ") + "   ·   " + rows.length + " report";
-    vals.push(line); bgs.push(new Array(W).fill(C_BLUE)); fcs.push(new Array(W).fill("#ffffff")); fws.push(new Array(W).fill("bold"));
+    const items = personItems_(m, db, ab);
+    const line0 = new Array(W).fill("");
+    line0[0] = m.name.toUpperCase() + "   ·   " + (m.jabatan || "-") + "   ·   " + (role === "dg" ? "semua brand" : brandsOf_(m).join(", ")) + "   ·   " + items.filter(x => x.r).length + " report";
+    vals.push(line0); bgs.push(new Array(W).fill(C_BLUE)); fcs.push(new Array(W).fill("#ffffff")); fws.push(new Array(W).fill("bold"));
     groupRows.push(vals.length);
     let lastDate = "", band = false;
-    rows.forEach(r => {
-      const d = d_(r[1]);
+    items.forEach(it => {
+      const d = it.d;
       if (d !== lastDate) { band = !band; lastDate = d; }
-      const p = d.split("-").map(Number);
-      vals.push([dateCell_(d), HARI[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()], m.name, m.jabatan, brand_(r[3]),
-        Number(r[4]) || 0, role === "admin" ? "upload" : role === "dg" ? "desain" : "video",
-        role === "admin" ? Number(r[5]) || 0 : "", role === "admin" ? Number(r[6]) || 0 : "", role === "admin" ? Number(r[7]) || 0 : "",
-        String(r[8] || ""), String(r[9] || ""), String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""),
-        Number(r[14]) || 0, String(r[16] || "")]);
-      const bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
-      if (r[12]) bg[iKend] = C_WARN;
+      let bg;
+      if (it.a) {
+        const st = String(it.a[3] || "");
+        vals.push([dateCell_(d), hari_(d), m.name, m.jabatan, st.toUpperCase(), "", "", "", "", "", "", "", "", String(it.a[4] || ""), "", "", "", "", String(it.a[6] || "")]);
+        bg = new Array(W).fill(st === "Alpha" ? C_ALPHA : C_WARN);
+      } else {
+        const r = it.r;
+        vals.push([dateCell_(d), hari_(d), m.name, m.jabatan, "Hadir", brand_(r[3]),
+          Number(r[4]) || 0, role === "admin" ? "upload" : role === "dg" ? "desain" : "video",
+          role === "admin" ? Number(r[5]) || 0 : "", role === "admin" ? Number(r[6]) || 0 : "", role === "admin" ? Number(r[7]) || 0 : "",
+          String(r[8] || ""), String(r[9] || ""), String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""),
+          Number(r[14]) || 0, String(r[16] || "")]);
+        bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
+        if (r[12]) bg[iKend] = C_WARN;
+      }
       bgs.push(bg); fcs.push(new Array(W).fill("#23252f")); fws.push(new Array(W).fill("normal"));
     });
   });
@@ -440,14 +476,14 @@ function rebuildAll_(team, db) {
     groupRows.forEach(i => sh.getRange(3 + i, 1, 1, W).merge());
   }
   sh.setFrozenRows(3);
-  const widths = [92, 70, 130, 120, 60, 70, 70, 80, 80, 80, 120, 170, 320, 300, 200, 200, 90, 135];
+  const widths = [92, 70, 130, 120, 84, 60, 70, 70, 80, 80, 80, 120, 170, 320, 300, 200, 200, 90, 135];
   widths.forEach((w, i) => sh.setColumnWidth(i + 1, w));
   PropertiesService.getScriptProperties().setProperty("lastAll", String(Date.now()));
 }
 
 function reorder_(team) {
   const ss = SpreadsheetApp.getActive();
-  const order = [SH.team.name, SH.target.name, ALL_NAME];
+  const order = [SH.team.name, SH.target.name, SH.absen.name, ALL_NAME];
   let pos = 1;
   const move = sh => { if (sh) { ss.setActiveSheet(sh); ss.moveActiveSheet(pos++); } };
   order.forEach(n => move(ss.getSheetByName(n)));
@@ -455,6 +491,114 @@ function reorder_(team) {
   [SH.db, SH.photo].forEach(def => { const s = ss.getSheetByName(def.name); if (s && !s.isSheetHidden()) s.hideSheet(); });
   const first = ss.getSheetByName(ALL_NAME) || ss.getSheetByName(SH.team.name);
   if (first) ss.setActiveSheet(first);
+}
+
+/* ===================== PINDAH BRAND, KEHADIRAN, PERBAIKAN DATA ===================== */
+
+/** Pindahkan satu report ke brand lain (misalnya salah pilih brand). */
+function moveEntry_(ctx, req) {
+  const cc = String(req.cc || ""), date = String(req.date || ""), from = brand_(req.from), to = brand_(req.to);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || BRAND_CODES.indexOf(from) < 0 || BRAND_CODES.indexOf(to) < 0 || from === to) throw new Error("FORBIDDEN:bad_request");
+  const m = ctx.team.find(c => c.id === cc);
+  if (!m) throw new Error("FORBIDDEN:unknown_member");
+  if (!ctx.isAdmin && (!ctx.me || ctx.me.id !== cc)) throw new Error("FORBIDDEN:not_owner");
+  if (!ctx.isAdmin && roleOf_(m.jabatan) !== "dg" && brandsOf_(m).indexOf(to) < 0) throw new Error("FORBIDDEN:brand_not_assigned");
+  const kFrom = cc + "_" + date + "_" + from, kTo = cc + "_" + date + "_" + to;
+  withLock_(() => {
+    const data = rows_(SH.db);
+    if (data.some(r => String(r[0]) === kTo)) throw new Error("FORBIDDEN:target_exists");
+    const i = data.findIndex(r => String(r[0]) === kFrom);
+    if (i < 0) throw new Error("FORBIDDEN:not_found");
+    const sh = sheet_(SH.db);
+    sh.getRange(i + 2, 1).setValue(kTo);
+    sh.getRange(i + 2, 4).setValue(to);
+    rebuildPerson_(m);
+    markDirty_();
+  });
+  return { ok: true };
+}
+
+/** Cuti / Izin / Sakit / Alpha untuk satu atau beberapa tanggal. Status kosong = hadir (hapus catatan). */
+function saveAbsence_(ctx, req) {
+  const cc = String(req.cc || ""), status = String(req.status || ""), note = String(req.note || "").slice(0, 500);
+  const dates = (Array.isArray(req.dates) ? req.dates : []).map(String).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  if (!dates.length || dates.length > 31) throw new Error("FORBIDDEN:bad_dates");
+  if (status && STATUS.indexOf(status) < 0) throw new Error("FORBIDDEN:bad_status");
+  const m = ctx.team.find(c => c.id === cc);
+  if (!m) throw new Error("FORBIDDEN:unknown_member");
+  if (!ctx.isAdmin && (!ctx.me || ctx.me.id !== cc)) throw new Error("FORBIDDEN:not_owner");
+  if (!ctx.isAdmin && status === "Alpha") throw new Error("FORBIDDEN:alpha_admin_only");
+  withLock_(() => {
+    const sh = sheet_(SH.absen);
+    const data = rows_(SH.absen);
+    const idx = {};
+    data.forEach((r, i) => { idx[String(r[0]).trim() + "|" + d_(r[2])] = i; });
+    if (!ctx.isAdmin && dates.some(d => idx[cc + "|" + d] !== undefined && String(data[idx[cc + "|" + d]][3]) === "Alpha")) throw new Error("FORBIDDEN:alpha_admin_only");
+    const now = Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss");
+    const del = [];
+    dates.forEach(d => {
+      const i = idx[cc + "|" + d];
+      if (!status) { if (i !== undefined) del.push(i + 2); return; }
+      const row = [cc, m.name, d, status, note, ctx.email, now];
+      if (i !== undefined) sh.getRange(i + 2, 1, 1, row.length).setValues([row]);
+      else sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+    });
+    del.sort((a, b) => b - a).forEach(r => sh.deleteRow(r));
+    rebuildPerson_(m);
+    markDirty_();
+  });
+  return { ok: true };
+}
+
+/**
+ * Data dari versi 1 yang dipindahkan ke brand yang salah (karena kolom Brand kosong / tidak terbaca)
+ * dipindahkan ke brand yang benar sesuai sheet "Anggota". Hanya menyentuh baris hasil pindahan versi 1.
+ */
+function fixMigrated_(team) {
+  const ss = SpreadsheetApp.getActive();
+  const oldR = ss.getSheets().find(s => /^Report Harian \(lama\)/.test(s.getName()));
+  const oldT = ss.getSheets().find(s => /^Target Mingguan \(lama\)/.test(s.getName()));
+  const mem = {};
+  team.forEach(m => { mem[m.id] = m; });
+  const fixedBrands = m => (m && roleOf_(m.jabatan) !== "dg") ? brandList_(m.brand) : [];
+  let moved = 0;
+  if (oldR && oldR.getLastRow() > 1) {
+    const sig = {};
+    oldR.getRange(2, 1, oldR.getLastRow() - 1, 18).getValues().forEach(r => {
+      const id = String(r[3]).trim(), d = d_(r[1]);
+      if (!id || !d) return;
+      const up = r[17] instanceof Date ? Utilities.formatDate(r[17], TZ, "yyyy-MM-dd HH:mm:ss") : String(r[17] || "");
+      sig[id + "|" + d + "|" + up] = brandList_(r[8]);
+    });
+    const sh = sheet_(SH.db), data = rows_(SH.db), keys = {};
+    data.forEach(r => { keys[String(r[0])] = true; });
+    data.forEach((r, i) => {
+      const id = String(r[2]), d = d_(r[1]), assigned = fixedBrands(mem[id]), cur = brand_(r[3]);
+      if (!assigned.length || assigned.indexOf(cur) >= 0) return;
+      const pref = sig[id + "|" + d + "|" + String(r[16] || "")];
+      if (!pref) return;
+      const nb = pref.find(b => assigned.indexOf(b) >= 0) || assigned[0];
+      const nk = id + "_" + d + "_" + nb;
+      if (keys[nk]) return;
+      delete keys[String(r[0])]; keys[nk] = true;
+      sh.getRange(i + 2, 1).setValue(nk); sh.getRange(i + 2, 4).setValue(nb); moved++;
+    });
+  }
+  if (oldT && oldT.getLastRow() > 1) {
+    const sig = {};
+    oldT.getRange(2, 1, oldT.getLastRow() - 1, 4).getValues().forEach(r => { sig[String(r[0]).trim() + "|" + d_(r[2])] = true; });
+    const sh = sheet_(SH.target), data = rows_(SH.target), keys = {};
+    data.forEach(r => { keys[String(r[0]) + "|" + brand_(r[2]) + "|" + d_(r[3])] = true; });
+    data.forEach((r, i) => {
+      const id = String(r[0]), w = d_(r[3]), assigned = fixedBrands(mem[id]), cur = brand_(r[2]);
+      if (!assigned.length || assigned.indexOf(cur) >= 0 || !sig[id + "|" + w]) return;
+      const nk = id + "|" + assigned[0] + "|" + w;
+      if (keys[nk]) return;
+      delete keys[id + "|" + cur + "|" + w]; keys[nk] = true;
+      sh.getRange(i + 2, 3).setValue(assigned[0]); moved++;
+    });
+  }
+  return moved;
 }
 
 /* ======================= STRUKTUR SHEET & MIGRASI ======================= */
@@ -508,7 +652,7 @@ function ensureSheets_() {
       }
       oldReport.setName(uniqueName_("Report Harian (lama)")); oldReport.hideSheet();
     }
-    if (readTeam_().length) rapikan_(); else reorder_([]);
+    if (readTeam_().length) { fixMigrated_(readTeam_()); rapikan_(); } else reorder_([]);
     props.setProperty("ready", VERSION);
   });
 }
@@ -522,9 +666,18 @@ function roleOf_(j) {
   return "cc";
 }
 function brand_(v) { const s = String(v == null ? "" : v).trim().toUpperCase(); return s === "77.0" ? "77" : s; }
+function brandCode_(t) {
+  const s = String(t == null ? "" : t).trim();
+  if (!s) return "";
+  const up = brand_(s);
+  if (BRAND_CODES.indexOf(up) >= 0) return up;
+  const lo = s.toLowerCase().replace(/\s+/g, " ");
+  const hit = BRAND_ALIAS.find(a => a[1].test(lo) || a[1].test(lo.replace(/^batik\s+/, "")));
+  return hit ? hit[0] : "";
+}
 function brandList_(v) {
   const out = [];
-  String(v || "").split(/[,\/;+]/).map(brand_).forEach(b => { if (BRAND_CODES.indexOf(b) >= 0 && out.indexOf(b) < 0) out.push(b); });
+  String(v || "").split(/[,\/;+|\n]/).map(brandCode_).forEach(b => { if (b && out.indexOf(b) < 0) out.push(b); });
   return out.sort((a, b) => BRAND_CODES.indexOf(a) - BRAND_CODES.indexOf(b));
 }
 function brandsOf_(m) { const l = brandList_(m.brand); return l.length ? l : BRAND_CODES.slice(); }
@@ -596,9 +749,17 @@ function keluarkanSemuaPerangkat() {
   try { SpreadsheetApp.getActive().toast("Semua perangkat harus login ulang.", "Daily Report", 5); } catch (x) { }
 }
 
+/** Memindahkan data versi 1 yang salah brand ke brand yang benar (sesuai sheet "Anggota"). */
+function perbaikiBrandDataLama() {
+  let n = 0;
+  withLock_(() => { n = fixMigrated_(readTeam_()); rapikan_(); });
+  try { SpreadsheetApp.getActive().toast(n + " baris dipindahkan ke brand yang benar.", "Daily Report", 6); } catch (x) { }
+}
+
 function onOpen() {
   SpreadsheetApp.getUi().createMenu("Daily Report")
     .addItem("Rapikan semua sheet sekarang", "rapikanSemua")
+    .addItem("Perbaiki brand data lama", "perbaikiBrandDataLama")
     .addSeparator()
     .addItem("Keluarkan semua perangkat (wajib login ulang)", "keluarkanSemuaPerangkat")
     .addToUi();

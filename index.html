@@ -63,7 +63,7 @@
     <div id="personView" hidden>
       <section class="sec">
         <h2 class="stitle"><b>Pilih</b> brand</h2>
-        <p class="ssub">Report diisi terpisah untuk setiap brand yang dikerjakan.</p>
+        <p class="ssub" id="brandHint">Report diisi terpisah untuk setiap brand yang dikerjakan.</p>
         <div class="tabs" id="brandTabs" role="tablist"></div>
       </section>
       <section class="stats" id="stats"></section>
@@ -80,6 +80,7 @@
             <span><i class="lg has"></i>Ada isian</span>
             <span><b class="otx">+2j</b> lembur</span>
             <span><i class="lg kd"></i>Ada kendala</span>
+            <span><span class="abdg">Cuti / Izin / Sakit / Alpha</span> tidak hadir</span>
           </div>
         </div>
         <div class="card daycard" id="dayPanel" aria-live="polite"></div>
@@ -109,6 +110,15 @@
   <footer class="foot">Daily Report Creative · Divisi Creative Indogroup · <a href="privacy.html">Kebijakan privasi</a></footer>
 </div>
 <input type="file" id="photoIn" accept="image/*" hidden>
+<div class="modal" id="cropModal" hidden role="dialog" aria-modal="true" aria-labelledby="cropTitle">
+  <div class="modalbox">
+    <h3 id="cropTitle">Atur foto</h3>
+    <p class="hint">Geser foto untuk mengatur posisi. Zoom dengan slider, scroll mouse, atau cubit dua jari di HP.</p>
+    <div class="cropwrap"><canvas id="cropCv" width="560" height="560" tabindex="0" aria-label="Area atur foto. Gunakan panah untuk menggeser, plus dan minus untuk zoom."></canvas></div>
+    <div class="zoomrow"><span aria-hidden="true">−</span><input type="range" id="cropZoom" min="1" max="4" step="0.01" value="1" aria-label="Zoom foto"><span aria-hidden="true">+</span></div>
+    <div class="cropact"><button type="button" class="pill" id="cropRotate">Putar 90°</button><span class="grow"></span><button type="button" class="pill ghost" id="cropCancel">Batal</button><button type="button" class="pbtn" id="cropSave">Simpan foto</button></div>
+  </div>
+</div>
 <div class="toast" id="toast" hidden></div>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <script type="module" src="app.js"></script>

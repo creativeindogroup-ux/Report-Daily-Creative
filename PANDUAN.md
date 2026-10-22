@@ -1,6 +1,30 @@
 # Panduan — Daily Report Creative (GitHub + Google Sheets)
 
-## Update ke versi 2 (lakukan sekali, ± 5 menit)
+## Update ke versi 2.1 (± 3 menit)
+
+Isi versi 2.1:
+- **Perbaikan bug:** pilihan brand di *Pengaturan atasan* sekarang bisa diedit. Nama brand yang ditulis manual di sheet "Anggota" (misalnya "Menteri" atau "Batik Oliver") sekarang dikenali.
+- **Data lama yang salah brand** (contoh: Rooyan masuk ke OLV) otomatis dipindahkan ke brand yang benar setelah atasan mengatur brand orang tersebut.
+- **Tombol "Pindahkan report ini"** di form harian, untuk mengoreksi report yang salah brand.
+- **Desain Grafis bebas mengisi ketujuh brand.** Brand yang dipilih atasan menjadi "brand utama".
+- **Kehadiran: Cuti / Izin / Sakit / Alpha** per tanggal, bisa diisi untuk beberapa hari sekaligus.
+  - Alpha hanya bisa diisi atasan.
+  - Cuti, Izin, dan Sakit otomatis mengurangi target mingguan.
+  - Tercatat di sheet **Kehadiran**, di tab tiap orang, dan di Excel.
+- **Editor foto:** geser, zoom (slider, scroll, atau cubit), dan putar sebelum disimpan. Foto besar sekarang tajam.
+
+### Langkahnya
+1. **GitHub:** sudah otomatis kalau Claude sudah diberi akses ke repo. Kalau belum, upload `index.html`, `style.css`, `app.js`, `Code.gs`, dan `PANDUAN.md` lewat **Add file → Upload files → Commit changes**.
+2. **Google Sheets** (wajib):
+   - Buka **Extensions → Apps Script**, lalu tekan **Ctrl + A → Delete** untuk menghapus kode lama.
+   - Tempel isi `Code.gs` yang baru, lalu klik **Save**.
+   - Pilih **`setupAwal`**, lalu klik **▶ Run**.
+   - Klik **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**.
+3. **Atasan:** buka **Pengaturan atasan** dan pastikan brand setiap orang sudah benar (contoh: Rooyan = MTR). Data lama akan langsung pindah ke brand yang benar. Kalau perlu, jalankan juga menu **Daily Report → Perbaiki brand data lama** di Google Sheet.
+
+---
+
+## Update ke versi 2 (sudah dilakukan)
 
 Versi 2 berisi:
 - **7 brand**: OLV, KNG, 77, MTR, IDN, RS, TKS.
@@ -46,6 +70,7 @@ Setelah `setupAwal` dijalankan, data lama otomatis dipindahkan:
 |---|---|
 | **Anggota** | Daftar tim: ID, nama, jabatan, brand (dipisah koma), Gmail. Boleh diedit langsung. |
 | **Target** | Target per orang, per brand, per minggu (Senin). |
+| **Kehadiran** | Cuti / Izin / Sakit / Alpha per orang per tanggal, beserta keterangan. |
 | **Semua Report** | Semua isian dikelompokkan per nama, urut tanggal, link bisa diklik. Dirapikan otomatis tiap 5 menit. |
 | **(nama orang)** | Satu tab per orang: urut tanggal, dikelompokkan per bulan, link bisa diklik. Diperbarui setiap kali orang itu menyimpan report. |
 | _data, _foto | Database dashboard (tersembunyi). **Jangan diubah manual.** |

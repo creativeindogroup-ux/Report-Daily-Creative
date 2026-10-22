@@ -8,7 +8,9 @@ const SCRIPT_URL = String(CFG.SCRIPT_URL || "").trim();
 const GOOGLE_CLIENT_ID = String(CFG.GOOGLE_CLIENT_ID || "").trim();
 
 /* ---------------- konstanta ---------------- */
-const BRANDS = [["OLV","Batik Oliver"],["KNG","Kenangan Fashion"],["77","Batik 77"],["MTR","Menteri"],["IDN","Indo Group"],["RS","Rama Shinta"],["TKS","Taksaka"]];
+const BRANDS = [["OLV","Batik Oliver"],["KNG","Kenangan Fashion"],["77","Batik 77"],["MTR","Batik Menteri"],["IDN","Batik Indonesia"],["RS","Batik Rama Shinta"],["TKS","Batik Taksaka"]];
+const BRAND_ALIAS = [["OLV", /oliver|^olv$/], ["KNG", /kenangan|^kng$/], ["77", /^(batik\s*)?77$/], ["MTR", /menteri|^mtr$/], ["IDN", /indonesia|indo\s*group|^idn$/], ["RS", /rama\s*shinta|ramashinta|^rs$/], ["TKS", /taksaka|^tks$/]];
+const STATUS = ["Cuti","Izin","Sakit","Alpha"];
 const CODES = BRANDS.map(b => b[0]);
 const BNAME = Object.fromEntries(BRANDS);
 const CAMP = ["Banner Marketplace","Sticker Live","Katalog Watermark","Thumbnail Live"];
@@ -42,18 +44,27 @@ const ls = {
 const S = {
   month: TODAY.slice(0, 7), sel: TODAY, view: ls.get("view") || "", brandF: ls.get("brandF") || "", brandSel: {},
   ccs: [], entries: {}, targets: {}, photos: {}, email: "", isAdmin: false, me: "",
-  ready: false, pending: {}, pendingT: {}, teamDirty: 0, seq: 0, sheetUrl: "", armed: null
+  ready: false, pending: {}, pendingT: {}, teamDirty: 0, seq: 0, sheetUrl: "", armed: null,
+  absen: {}, pendingA: {}, photosBig: {}
 };
 let SESSION = ls.get("sess") || "";
 
 function toast(m) { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
 const ccById = id => S.ccs.find(c => c.id === id);
 const roleOf = c => { const j = String(c && c.jabatan || ""); return /desain|design|graf/i.test(j) ? "dg" : /admin/i.test(j) ? "admin" : "cc"; };
-const brandList = v => { const o = []; String(v || "").split(/[,\/;+]/).map(x => x.trim().toUpperCase()).forEach(b => { if (CODES.includes(b) && !o.includes(b)) o.push(b); }); return o.sort((a, b) => CODES.indexOf(a) - CODES.indexOf(b)); };
-const brandsOf = c => { const l = brandList(c && c.brand); return l.length ? l : CODES.slice(); };
+const brandCode = t => { const x = String(t || "").trim(); if (!x) return ""; if (CODES.includes(x.toUpperCase())) return x.toUpperCase(); const lo = x.toLowerCase().replace(/\s+/g, " "); const h = BRAND_ALIAS.find(a => a[1].test(lo) || a[1].test(lo.replace(/^batik\s+/, ""))); return h ? h[0] : ""; };
+const brandList = v => { const o = []; String(v || "").split(/[,\/;+|\n]/).map(brandCode).forEach(b => { if (b && !o.includes(b)) o.push(b); }); return o.sort((a, b) => CODES.indexOf(a) - CODES.indexOf(b)); };
+/** brand yang boleh diisi: Desain Grafis bebas 7 brand, yang lain sesuai pengaturan atasan (kosong = semua) */
+const brandsOf = c => { if (roleOf(c) === "dg") return CODES.slice(); const l = brandList(c && c.brand); return l.length ? l : CODES.slice(); };
+const assignedOf = c => brandList(c && c.brand);
 const canEdit = id => S.isAdmin || (!!id && id === S.me);
 const ekey = (cc, d, b) => cc + "_" + d + "_" + b;
 const tgt = (cc, b, wk) => +(S.targets[cc + "_" + b + "_" + wk]?.target) || 0;
+const absOf = (cc, d) => S.absen[cc + "_" + d] || null;
+/** jumlah hari Cuti/Izin/Sakit (Senin–Sabtu) dalam satu minggu: mengurangi target */
+const offDays = (cc, wk) => { let n = 0; for (let i = 0; i < 6; i++) { const a = absOf(cc, add(wk, i)); if (a && a.status !== "Alpha") n++; } return n; };
+/** target efektif = target × hari kerja tersisa / 6 */
+const tgtEff = (cc, b, wk) => { const t = tgt(cc, b, wk); return t ? Math.round(t * Math.max(0, 6 - offDays(cc, wk)) / 6) : 0; };
 const initials = n => String(n || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
 function range() { const [y, m] = S.month.split("-").map(Number); const first = S.month + "-01", last = ds(new Date(y, m, 0)); return { first, last, start: monday(first), end: add(monday(last), 6) }; }
 const curWeek = () => monday(S.sel.startsWith(S.month) ? S.sel : (TODAY.startsWith(S.month) ? TODAY : S.month + "-01"));
@@ -62,6 +73,7 @@ function curBrand() {
   const bs = brandsOf(c); if (bs.length === 1) return bs[0];
   const b = S.brandSel[S.view];
   if (b === "" || bs.includes(b)) return b;
+  if (roleOf(c) === "dg") return assignedOf(c)[0] || "";
   return bs[0];
 }
 /** filter aktif: halaman orang → orang + brand tab; beranda → filter brand */
@@ -71,10 +83,20 @@ function ents(from, to, sc = scope()) { return Object.values(S.entries).filter(e
 const sum = (arr, k) => arr.reduce((a, e) => a + (+e[k] || 0), 0);
 /** target harian/mingguan untuk filter aktif */
 function scopeTarget(wk, sc = scope()) {
-  if (sc.cc) { const c = ccById(sc.cc); return (sc.brand ? [sc.brand] : brandsOf(c)).reduce((a, b) => a + tgt(c.id, b, wk), 0); }
-  return S.ccs.reduce((a, c) => a + brandsOf(c).filter(b => !sc.brand || b === sc.brand).reduce((x, b) => x + tgt(c.id, b, wk), 0), 0);
+  if (sc.cc) { const c = ccById(sc.cc); return (sc.brand ? [sc.brand] : brandsOf(c)).reduce((a, b) => a + tgtEff(c.id, b, wk), 0); }
+  return S.ccs.reduce((a, c) => a + brandsOf(c).filter(b => !sc.brand || b === sc.brand).reduce((x, b) => x + tgtEff(c.id, b, wk), 0), 0);
 }
-const membersInScope = () => S.ccs.filter(c => !S.brandF || brandsOf(c).includes(S.brandF));
+/** brand yang ditampilkan di kartu rekap: DG = brand utama + brand yang ada isian/target */
+function homeBrands(c) {
+  if (roleOf(c) !== "dg") return brandsOf(c);
+  const { start, end } = range(), wk = curWeek(), set = new Set(assignedOf(c));
+  Object.values(S.entries).forEach(e => { if (e.cc === c.id && e.date >= start && e.date <= end) set.add(e.brand); });
+  CODES.forEach(b => { if (tgt(c.id, b, wk)) set.add(b); });
+  return CODES.filter(b => set.has(b));
+}
+const membersInScope = () => S.ccs.filter(c => !S.brandF || homeBrands(c).includes(S.brandF) || (roleOf(c) === "dg" && !homeBrands(c).length));
+const absCount = (cc, from, to) => { const o = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 }; Object.values(S.absen).forEach(a => { if (a.cc === cc && a.date >= from && a.date <= to && o[a.status] !== undefined) o[a.status]++; }); return o; };
+const absShort = o => STATUS.filter(k => o[k]).map(k => k[0] + o[k]).join(" · ");
 
 /* ---------------- foto ---------------- */
 function ava(c, cls = "") {
@@ -86,38 +108,93 @@ async function syncPhotos() {
   S.ccs.forEach(c => {
     if (!c.photoVer) { delete S.photos[c.id]; return; }
     let cached = null; try { cached = JSON.parse(ls.get("ph_" + c.id) || "null"); } catch (e) { }
-    if (cached && cached.v === c.photoVer) S.photos[c.id] = cached.data; else need.push(c.id);
+    if (cached && cached.v === c.photoVer) { S.photos[c.id] = cached.data; if (cached.big) S.photosBig[c.id] = cached.big; } else need.push(c.id);
   });
   if (!need.length) return;
   try {
     const r = await api("photos", { ids: need });
-    Object.entries(r.photos || {}).forEach(([id, p]) => { if (p.data) { S.photos[id] = p.data; ls.set("ph_" + id, JSON.stringify({ v: p.v, data: p.data })); } });
+    Object.entries(r.photos || {}).forEach(([id, p]) => { if (p.data) { S.photos[id] = p.data; if (p.big) S.photosBig[id] = p.big; ls.set("ph_" + id, JSON.stringify({ v: p.v, data: p.data, big: p.big || "" })); } });
     renderAll();
   } catch (e) { }
 }
 function loadImage(file) {
   return new Promise((res, rej) => { const url = URL.createObjectURL(file); const img = new Image(); img.onload = () => { URL.revokeObjectURL(url); res(img); }; img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("img")); }; img.src = url; });
 }
-function drawJpeg(img, size, square, q) {
-  const w = img.naturalWidth, h = img.naturalHeight;
-  const cv = document.createElement("canvas"); const cx = cv.getContext("2d");
-  if (square) { const s = Math.min(w, h); cv.width = cv.height = size; cx.drawImage(img, (w - s) / 2, (h - s) / 2.6, s, s, 0, 0, size, size); }
-  else { const k = Math.min(1, size / Math.max(w, h)); cv.width = Math.round(w * k); cv.height = Math.round(h * k); cx.drawImage(img, 0, 0, cv.width, cv.height); }
-  return cv.toDataURL("image/jpeg", q);
+/* editor foto: geser, zoom (slider / scroll / cubit), putar */
+const CROP = { img: null, cc: "", zoom: 1, x: 0, y: 0, ptrs: new Map(), pinch: 0 };
+const VP = 560;
+function cropBase() { const i = CROP.img; return Math.max(VP / i.width, VP / i.height); }
+function cropClamp() {
+  const i = CROP.img, sc = cropBase() * CROP.zoom, mx = Math.max(0, (i.width * sc - VP) / 2), my = Math.max(0, (i.height * sc - VP) / 2);
+  CROP.x = Math.min(mx, Math.max(-mx, CROP.x)); CROP.y = Math.min(my, Math.max(-my, CROP.y));
 }
-async function uploadPhoto(cc, file) {
+function cropDraw(ctx, size, overlay) {
+  const i = CROP.img, k = size / VP, sc = cropBase() * CROP.zoom * k, w = i.width * sc, h = i.height * sc;
+  ctx.fillStyle = "#c6cee8"; ctx.fillRect(0, 0, size, size);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(i, size / 2 + CROP.x * k - w / 2, size / 2 + CROP.y * k - h / 2, w, h);
+  if (overlay) {
+    const p = new Path2D(); p.rect(0, 0, size, size); p.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(35,37,47,.45)"; ctx.fill(p, "evenodd");
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+function cropRender() { cropClamp(); cropDraw($("cropCv").getContext("2d"), VP, true); $("cropZoom").value = CROP.zoom; }
+function cropExport(size, q) { const cv = document.createElement("canvas"); cv.width = cv.height = size; cropDraw(cv.getContext("2d"), size, false); return cv.toDataURL("image/jpeg", q); }
+function fitJpeg(size, limit, q = 0.88) { let out; do { out = cropExport(size, q); q -= 0.08; if (q < 0.5) { size = Math.round(size * 0.85); q = 0.82; } } while (out.length > limit && size > 80); return out; }
+async function openCropper(cc, file) {
   if (!file || !/^image\//.test(file.type)) { toast("Pilih file gambar (JPG/PNG)"); return; }
-  toast("Mengunggah foto…");
+  try { CROP.img = await loadImage(file); } catch (e) { toast("Gambar tidak bisa dibuka, coba file JPG/PNG lain"); return; }
+  CROP.cc = cc; CROP.zoom = 1; CROP.x = 0; CROP.y = 0; CROP.ptrs.clear();
+  const c = ccById(cc); $("cropTitle").textContent = "Atur foto" + (c ? " " + c.name : "");
+  $("cropModal").hidden = false; document.body.style.overflow = "hidden"; cropRender(); $("cropSave").focus();
+}
+function closeCropper() { $("cropModal").hidden = true; document.body.style.overflow = ""; CROP.img = null; }
+function cropRotate() {
+  const i = CROP.img, cv = document.createElement("canvas"); cv.width = i.height; cv.height = i.width;
+  const cx = cv.getContext("2d"); cx.translate(cv.width / 2, cv.height / 2); cx.rotate(Math.PI / 2); cx.drawImage(i, -i.width / 2, -i.height / 2);
+  CROP.img = cv; CROP.x = 0; CROP.y = 0; cropRender();
+}
+async function cropSave() {
+  const cc = CROP.cc, btn = $("cropSave"); btn.disabled = true; btn.textContent = "Menyimpan…";
   try {
-    const img = await loadImage(file);
-    let thumb = "", q = 0.85, size = 240;
-    do { thumb = drawJpeg(img, size, true, q); q -= 0.1; if (q < 0.45) { size -= 40; q = 0.8; } } while (thumb.length > 47000 && size > 80);
-    const full = drawJpeg(img, 1000, false, 0.85);
-    const r = await api("savePhoto", { cc, thumb, full });
-    S.photos[cc] = thumb; ls.set("ph_" + cc, JSON.stringify({ v: r.v, data: thumb }));
+    const thumb = fitJpeg(240, 47000), big = fitJpeg(720, 190000), full = cropExport(1000, 0.88);
+    const r = await api("savePhoto", { cc, thumb, big, full });
+    S.photos[cc] = thumb; S.photosBig[cc] = big; ls.set("ph_" + cc, JSON.stringify({ v: r.v, data: thumb, big }));
     const c = ccById(cc); if (c) c.photoVer = r.v;
-    renderAll(); toast("Foto tersimpan");
-  } catch (e) { toast(e && e.error === "forbidden" ? "Kamu hanya bisa mengganti fotomu sendiri" : "Foto gagal diunggah, coba file lain"); }
+    closeCropper(); renderAll(); toast("Foto tersimpan");
+  } catch (e) { toast(e && e.error === "forbidden" ? "Kamu hanya bisa mengganti fotomu sendiri" : "Foto gagal disimpan, coba lagi"); }
+  finally { btn.disabled = false; btn.textContent = "Simpan foto"; }
+}
+function cropInit() {
+  const cv = $("cropCv"), k = () => VP / cv.getBoundingClientRect().width;
+  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); CROP.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); CROP.pinch = 0; });
+  cv.addEventListener("pointermove", e => {
+    if (!CROP.ptrs.has(e.pointerId) || !CROP.img) return;
+    const prev = CROP.ptrs.get(e.pointerId); CROP.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (CROP.ptrs.size === 1) { CROP.x += (e.clientX - prev.x) * k(); CROP.y += (e.clientY - prev.y) * k(); }
+    else if (CROP.ptrs.size === 2) {
+      const [a, b] = [...CROP.ptrs.values()], dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (CROP.pinch) CROP.zoom = Math.min(4, Math.max(1, CROP.zoom * dist / CROP.pinch));
+      CROP.pinch = dist;
+    }
+    cropRender();
+  });
+  const up = e => { CROP.ptrs.delete(e.pointerId); CROP.pinch = 0; };
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  cv.addEventListener("wheel", e => { e.preventDefault(); CROP.zoom = Math.min(4, Math.max(1, CROP.zoom * Math.exp(-e.deltaY * 0.0015))); cropRender(); }, { passive: false });
+  cv.addEventListener("keydown", e => {
+    const st = 12; let used = true;
+    if (e.key === "ArrowLeft") CROP.x -= st; else if (e.key === "ArrowRight") CROP.x += st; else if (e.key === "ArrowUp") CROP.y -= st; else if (e.key === "ArrowDown") CROP.y += st;
+    else if (e.key === "+" || e.key === "=") CROP.zoom = Math.min(4, CROP.zoom * 1.08); else if (e.key === "-") CROP.zoom = Math.max(1, CROP.zoom / 1.08); else used = false;
+    if (used) { e.preventDefault(); cropRender(); }
+  });
+  $("cropZoom").addEventListener("input", e => { CROP.zoom = +e.target.value; cropRender(); });
+  $("cropRotate").addEventListener("click", cropRotate);
+  $("cropCancel").addEventListener("click", closeCropper);
+  $("cropSave").addEventListener("click", cropSave);
+  $("cropModal").addEventListener("keydown", e => { if (e.key === "Escape") closeCropper(); });
+  $("cropModal").addEventListener("click", e => { if (e.target === $("cropModal")) closeCropper(); });
 }
 
 /* ---------------- render: hero & nav ---------------- */
@@ -136,9 +213,9 @@ function renderHero() {
   const c = ccById(S.view); if (!c) return;
   h.className = "hero";
   h.innerHTML = `<div class="hero-l"><span class="eyebrow">${esc(c.jabatan || "Content Creator")}</span>
-    <h1>${esc(c.name)}</h1><span class="hpill">${brandsOf(c).map(b => esc(b + " · " + BNAME[b])).join("&nbsp;&nbsp;|&nbsp;&nbsp;")}</span>
+    <h1>${esc(c.name)}</h1><span class="hpill">${roleOf(c) === "dg" ? "Bisa mengisi semua brand" + (assignedOf(c).length ? " · utama " + assignedOf(c).join(", ") : "") : brandsOf(c).map(b => esc(b + " · " + BNAME[b])).join("&nbsp;&nbsp;|&nbsp;&nbsp;")}</span>
     <div class="hfoot"><span class="arrow"></span><button class="pbtn" data-home>Kembali ke All Creative</button></div></div>
-    <div class="hero-r">${S.photos[c.id] ? `<img class="bigphoto" src="${S.photos[c.id]}" alt="Foto ${esc(c.name)}">` : `<span class="initials">${esc(initials(c.name))}</span>`}
+    <div class="hero-r">${S.photos[c.id] ? `<img class="bigphoto" src="${S.photosBig[c.id] || S.photos[c.id]}" alt="Foto ${esc(c.name)}">` : `<span class="initials">${esc(initials(c.name))}</span>`}
     ${canEdit(c.id) ? `<button class="photo-btn" data-photo="${esc(c.id)}">${S.photos[c.id] ? "Ganti foto" : "Tambah foto"}</button>` : ""}</div>`;
 }
 function renderNav() {
@@ -155,27 +232,30 @@ function renderNav() {
 /* ---------------- render: beranda (rekap per nama) ---------------- */
 function renderPeople() {
   $("homeView").hidden = !!S.view; if (S.view) return;
+  const ae = document.activeElement; if ($("people").contains(ae) && ae.tagName === "INPUT") return;
   const { first, last } = range(), wk = curWeek(), [y, m] = S.month.split("-").map(Number);
   $("rekapSub").textContent = `${BULAN[m - 1]} ${y} · minggu ${shortD(wk)} – ${shortD(add(wk, 6))}${S.brandF ? " · brand " + S.brandF + " (" + BNAME[S.brandF] + ")" : ""}`;
   const list = membersInScope();
   if (!list.length) { $("people").innerHTML = `<div class="emptyband">${!S.ccs.length ? (S.isAdmin ? "Belum ada anggota. Tambahkan di Pengaturan atasan di bawah." : "Daftar anggota belum diisi atasan.") : "Belum ada anggota yang memegang brand ini."}</div>`; return; }
   $("people").innerHTML = list.map(c => {
-    const role = roleOf(c), u = UNIT[role], bs = S.brandF ? [S.brandF] : brandsOf(c);
+    const role = roleOf(c), u = UNIT[role], bs = S.brandF ? [S.brandF] : homeBrands(c);
     const sc = { cc: c.id, brand: S.brandF };
     const month = ents(first, last, sc);
     const days = new Set(month.map(e => e.date)).size;
     const lastFill = month.concat(ents(range().start, range().end, sc)).reduce((a, e) => (e.updatedAt || "") > a ? e.updatedAt : a, "");
     const lf = lastFill ? new Date(lastFill) : null;
     const rows = bs.map(b => {
-      const wv = sum(ents(wk, add(wk, 6), { cc: c.id, brand: b }), "qty"), t = tgt(c.id, b, wk), p = t ? Math.min(100, wv / t * 100) : 0;
-      const tCell = S.isAdmin ? `<input class="tin" type="number" min="0" value="${t || ""}" placeholder="–" data-tcc="${esc(c.id)}" data-tb="${b}" data-tw="${wk}" aria-label="Target ${esc(c.name)} ${b} minggu ini">` : `${t || "–"}`;
-      return `<div class="brow${t && wv >= t ? " done" : ""}"><span class="bc">${b}</span><span class="bv">${wv} / ${tCell} <small>${u} minggu ini</small></span><div class="bar"><i style="width:${p}%"></i></div></div>`;
-    }).join("");
+      const wv = sum(ents(wk, add(wk, 6), { cc: c.id, brand: b }), "qty"), raw = tgt(c.id, b, wk), t = tgtEff(c.id, b, wk), p = t ? Math.min(100, wv / t * 100) : 0;
+      const tCell = S.isAdmin ? `<input class="tin" type="number" min="0" value="${raw || ""}" placeholder="–" data-tcc="${esc(c.id)}" data-tb="${b}" data-tw="${wk}" aria-label="Target ${esc(c.name)} ${b} minggu ini">` : `${t || "–"}`;
+      const adj = raw && t !== raw ? ` <small class="adj" title="Disesuaikan karena cuti/izin/sakit">→ ${t}</small>` : "";
+      return `<div class="brow${t && wv >= t ? " done" : ""}"><span class="bc">${b}</span><span class="bv">${wv} / ${tCell}${S.isAdmin ? adj : ""} <small>${u} minggu ini</small></span><div class="bar"><i style="width:${p}%"></i></div></div>`;
+    }).join("") || `<div class="prole">Belum ada isian bulan ini${role === "dg" ? " · bisa mengisi semua brand" : ""}</div>`;
+    const ac = absCount(c.id, first, last), an = STATUS.reduce((a, k) => a + ac[k], 0);
     const plat = role === "admin" ? `<div class="plat"><span>Facebook ${sum(month, "fb")}</span><span>YouTube ${sum(month, "yt")}</span><span>Shopee ${sum(month, "shopee")}</span></div>` : "";
     return `<article class="pcard">
       <div class="phead">${ava(c)}<div style="min-width:0"><div class="pname">${esc(c.name)}</div><div class="prole">${esc(c.jabatan || "Content Creator")}</div></div></div>
       <div style="display:grid;gap:8px">${rows}</div>${plat}
-      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="ot"><b>${fmt(sum(month, "lembur"))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div></div>
+      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="ot"><b>${fmt(sum(month, "lembur"))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
       <div class="pfoot"><span class="last">${lf ? "Terakhir mengisi " + shortD(ds(lf)) + " " + pad(lf.getHours()) + ":" + pad(lf.getMinutes()) : `${days ? "" : "Belum mengisi bulan ini"}`}</span><button class="pbtn" data-open="${esc(c.id)}">Lihat report</button></div>
     </article>`;
   }).join("");
@@ -188,22 +268,25 @@ function renderPersonTop() {
   const bs = brandsOf(c), cur = curBrand(), role = roleOf(c), u = UNIT[role];
   const { first, last } = range(), wk = curWeek();
   const tabs = (bs.length > 1 ? [["", "Semua brand"]] : []).concat(bs.map(b => [b, BNAME[b]]));
+  $("brandHint").textContent = role === "dg" ? "Desain Grafis bisa mengisi report untuk brand mana pun. Pilih brand yang dikerjakan, isi terpisah per brand." : "Report diisi terpisah untuk setiap brand yang dikerjakan.";
   $("brandTabs").innerHTML = tabs.map(([b, n]) => `<button class="tab" role="tab" aria-selected="${b === cur}" data-btab="${b}">${b ? `${b} <small>${esc(n)}</small>` : esc(n)}</button>`).join("");
 
   const sc = { cc: c.id, brand: cur };
   const wkE = ents(wk, add(wk, 6), sc), mE = ents(first, last, sc);
   const wv = sum(wkE, "qty"), t = scopeTarget(wk, sc), p = t ? Math.min(100, wv / t * 100) : 0;
-  const per = (cur ? [cur] : bs).map(b => { const v = sum(wkE.filter(e => e.brand === b), "qty"), tt = tgt(c.id, b, wk); return `<div class="wkrow"><b>${b}</b><div class="prog${tt && v >= tt ? " done" : ""}"><i style="width:${tt ? Math.min(100, v / tt * 100) : 0}%"></i></div><span><b>${v}</b> / ${tt || "–"}</span></div>`; }).join("");
+  const shown = cur ? [cur] : (role === "dg" ? homeBrands(c) : bs);
+  const off = offDays(c.id, wk), rawT = (cur ? [cur] : bs).reduce((a, b) => a + tgt(c.id, b, wk), 0);
+  const per = shown.map(b => { const v = sum(wkE.filter(e => e.brand === b), "qty"), tt = tgtEff(c.id, b, wk); return `<div class="wkrow"><b>${b}</b><div class="prog${tt && v >= tt ? " done" : ""}"><i style="width:${tt ? Math.min(100, v / tt * 100) : 0}%"></i></div><span><b>${v}</b> / ${tt || "–"}</span></div>`; }).join("");
   const otAll = ents(first, last, { cc: c.id, brand: "" });
   $("stats").innerHTML = `
     <div class="stat wkstat"><div class="l">${u[0].toUpperCase() + u.slice(1)} minggu ini · ${shortD(wk)} – ${shortD(add(wk, 6))}</div>
       <div class="v num">${wv}<small> / ${t || "–"}</small></div>
-      ${bs.length > 1 || !cur ? `<div class="wkrows">${per}</div>` : `<div class="prog${t && wv >= t ? " done" : ""}"><i style="width:${p}%"></i></div>`}
-      <div class="s">${!t ? "Target minggu ini belum diisi atasan" : wv >= t ? "Target minggu ini tercapai" : "Kurang " + (t - wv) + " " + u + " lagi"}</div></div>
+      ${!cur && shown.length ? `<div class="wkrows">${per}</div>` : `<div class="prog${t && wv >= t ? " done" : ""}"><i style="width:${p}%"></i></div>`}
+      <div class="s">${!t ? (rawT ? "Target minggu ini 0 karena tidak masuk sepanjang minggu" : "Target minggu ini belum diisi atasan") : wv >= t ? "Target minggu ini tercapai" : "Kurang " + (t - wv) + " " + u + " lagi"}${off && rawT ? ` · target disesuaikan dari ${rawT} (${off} hari cuti/izin/sakit)` : ""}</div></div>
     <div class="stat"><div class="l">Total ${u} bulan ini${cur ? " · " + cur : ""}</div><div class="v num">${sum(mE, "qty")}</div>
       <div class="s">${role === "admin" ? `Facebook ${sum(mE, "fb")} · YouTube ${sum(mE, "yt")} · Shopee ${sum(mE, "shopee")}` : new Set(mE.map(e => e.date)).size + " hari ada isian"}</div></div>
     <div class="stat ot"><div class="l">Total lembur bulan ini</div><div class="v num">${fmt(sum(otAll, "lembur"))}<small> jam</small></div>
-      <div class="s">${new Set(otAll.filter(e => +e.lembur > 0).map(e => e.date)).size} hari lembur · semua brand</div></div>`;
+      <div class="s">${new Set(otAll.filter(e => +e.lembur > 0).map(e => e.date)).size} hari lembur · semua brand${(() => { const o = absCount(c.id, first, last); const t2 = absShort(o); return t2 ? " · " + STATUS.filter(k => o[k]).map(k => k + " " + o[k]).join(", ") : ""; })()}</div></div>`;
 }
 
 /* ---------------- render: kalender ---------------- */
@@ -216,7 +299,10 @@ function renderCal() {
     for (let i = 0; i < 7; i++) {
       const s = add(mon, i), es = ents(s, s, sc), v = sum(es, "qty"), o = sum(es, "lembur"), sun = pd(s).getDay() === 0, out = s < first || s > last;
       const cls = ["cell", sun && "sun", out && "out", es.length && (dT && v >= dT ? "hit" : "has"), s === S.sel && "sel", s === TODAY && "today"].filter(Boolean).join(" ");
-      h += `<button class="${cls}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten${o ? ", lembur " + fmt(o) + " jam" : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}</span>` : ""}${o ? `<span class="ot">+${fmt(o)}j</span>` : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
+      let abd = "";
+      if (sc.cc) { const a = absOf(sc.cc, s); if (a) abd = `<span class="abdg st-${a.status}">${a.status}</span>`; }
+      else { const n = membersInScope().filter(c => absOf(c.id, s)).length; if (n) abd = `<span class="abdg">${n} absen</span>`; }
+      h += `<button class="${cls}${abd && sc.cc ? " absent" : ""}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten${o ? ", lembur " + fmt(o) + " jam" : ""}${abd ? ", " + abd.replace(/<[^>]+>/g, "") : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}</span>` : abd}${o ? `<span class="ot">+${fmt(o)}j</span>` : ""}${es.length && abd ? abd : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
     }
   }
   $("cal").innerHTML = h;
@@ -229,24 +315,27 @@ function renderSummary() {
   const cnt = (from, to) => {
     const es = ents(from, to, sc), by = r => es.filter(e => roleOf(ccById(e.cc)) === r);
     const a = by("admin");
-    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"), adm: sum(a, "qty"), qty: sum(es, "qty"), ot: sum(es, "lembur") };
+    const who = sc.cc ? [sc.cc] : membersInScope().map(c => c.id), ab = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 };
+    who.forEach(id => { const o = absCount(id, from, to); STATUS.forEach(k => ab[k] += o[k]); });
+    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"), adm: sum(a, "qty"), qty: sum(es, "qty"), ot: sum(es, "lembur"), ab };
   };
   const z = n => n ? n : `<span class="z">0</span>`;
+  const abT = v => { const t = absShort(v.ab); return t ? `<span class="abtxt" title="${STATUS.map(k => k + " " + v.ab[k]).join(", ")}">${t}</span>` : `<span class="z">–</span>`; };
   const rows = []; let k = 1;
   for (let mon = start; mon <= end; mon = add(mon, 7)) rows.push({ label: `Minggu ${k++}`, sub: `${shortD(mon)} – ${shortD(add(mon, 6))}`, cur: mon === wkNow, v: cnt(mon, add(mon, 6)), t: scopeTarget(mon, sc) });
   const tot = cnt(first, last), totT = rows.reduce((a, r) => a + r.t, 0);
   const cap = (v, t) => t ? `<span class="${v >= t ? "ok" : "no"}">${Math.round(v / t * 100)}%</span>` : `<span class="z">–</span>`;
   let head, line;
   if (!c) {
-    head = `<th>Minggu</th><th><span class="grp">Content Creator</span>Video</th><th><span class="grp">Desain Grafis</span>Desain</th><th><span class="grp">Admin</span>Facebook</th><th><span class="grp">Admin</span>YouTube</th><th><span class="grp">Admin</span>Shopee</th><th><span class="grp">Admin</span>Total upload</th><th>Lembur</th>`;
-    line = v => `<td>${z(v.cc)}</td><td>${z(v.dg)}</td><td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td>`;
+    head = `<th>Minggu</th><th><span class="grp">Content Creator</span>Video</th><th><span class="grp">Desain Grafis</span>Desain</th><th><span class="grp">Admin</span>Facebook</th><th><span class="grp">Admin</span>YouTube</th><th><span class="grp">Admin</span>Shopee</th><th><span class="grp">Admin</span>Total upload</th><th>Lembur</th><th>Tidak hadir</th>`;
+    line = v => `<td>${z(v.cc)}</td><td>${z(v.dg)}</td><td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
   } else if (role === "admin") {
-    head = `<th>Minggu</th><th>Facebook</th><th>YouTube</th><th>Shopee</th><th>Total upload</th><th>Target</th><th>Capaian</th><th>Lembur</th>`;
-    line = (v, t) => `<td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${t || "–"}</td><td>${cap(v.adm, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td>`;
+    head = `<th>Minggu</th><th>Facebook</th><th>YouTube</th><th>Shopee</th><th>Total upload</th><th>Target</th><th>Capaian</th><th>Lembur</th><th>Kehadiran</th>`;
+    line = (v, t) => `<td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${t || "–"}</td><td>${cap(v.adm, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
   } else {
     const u = UNIT[role];
-    head = `<th>Minggu</th><th>${u[0].toUpperCase() + u.slice(1)}</th><th>Target</th><th>Capaian</th><th>Lembur</th>`;
-    line = (v, t) => `<td>${z(v.qty)}</td><td>${t || "–"}</td><td>${cap(v.qty, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td>`;
+    head = `<th>Minggu</th><th>${u[0].toUpperCase() + u.slice(1)}</th><th>Target</th><th>Capaian</th><th>Lembur</th><th>Kehadiran</th>`;
+    line = (v, t) => `<td>${z(v.qty)}</td><td>${t || "–"}</td><td>${cap(v.qty, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
   }
   $("sumSub").textContent = `${c ? c.name + (sc.brand ? " · " + sc.brand : " · semua brand") : "All Creative" + (S.brandF ? " · " + S.brandF : " · semua brand")} · minggu dihitung Senin–Minggu, total hanya tanggal di ${BULAN[m - 1]}`;
   $("sumTable").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${rows.map(r => `<tr class="${r.cur ? "cur" : ""}"><td>${r.label}<small>${r.sub}</small></td>${line(r.v, r.t)}</tr>`).join("")}</tbody>
@@ -277,33 +366,62 @@ function renderDay() {
 
   if (!S.view) {
     const list = membersInScope(), filled = [], notyet = [];
-    list.forEach(c => { const es = ents(s, s, { cc: c.id, brand: S.brandF }).sort((a, b) => CODES.indexOf(a.brand) - CODES.indexOf(b.brand)); (es.length ? filled : notyet).push([c, es]); });
+    const absent = [];
+    list.forEach(c => { const es = ents(s, s, { cc: c.id, brand: S.brandF }).sort((a, b) => CODES.indexOf(a.brand) - CODES.indexOf(b.brand)); const a = absOf(c.id, s); if (es.length) filled.push([c, es]); else if (a) absent.push([c, a]); else notyet.push([c, es]); });
     const all = ents(s, s);
     p.innerHTML = `<div class="dhead"><span class="dayname">${longDate(s)}</span></div>
       <div class="sub" style="font-size:12.5px">${sum(all, "qty")} konten · lembur ${fmt(sum(all, "lembur"))} jam · ${filled.length} dari ${list.length} orang sudah mengisi</div>
       ${filled.length ? `<ul class="dlist">${filled.map(([c, es]) => `<li class="ditem">${ava(c, "sm")}<span class="nm">${esc(c.name)} <span class="tt" style="font-weight:500">· ${esc(c.jabatan || "")}</span></span><div class="body">${es.map(e => entryBlock(e, c)).join("")}</div></li>`).join("")}</ul>` : `<div class="empty">Belum ada yang mengisi report tanggal ini.</div>`}
+      ${absent.length ? `<div class="notyet"><b>Tidak hadir:</b> ${absent.map(([c, a]) => `${esc(c.name)} <span class="abdg st-${a.status}">${a.status}</span>${a.note ? ` <span class="tt">${esc(a.note)}</span>` : ""}`).join(", ")}</div>` : ""}
       ${notyet.length ? `<div class="notyet"><b>Belum mengisi:</b> ${notyet.map(([c]) => esc(c.name)).join(", ")}</div>` : ""}`;
     return;
   }
 
   const c = ccById(S.view); if (!c) return;
   const b = curBrand(), role = roleOf(c), u = UNIT[role], wk = monday(s);
+  const ab = absOf(c.id, s), st = ab ? ab.status : "";
+  const absEditable = canEdit(c.id) && !(st === "Alpha" && !S.isAdmin);
+  const absBlock = absEditable
+    ? `<div class="absbox" id="absBox"><div class="absrow"><span class="lbl">Kehadiran</span><div class="chips">${["", ...STATUS].map(x => `<button type="button" class="chip abs${x ? " st-" + x : ""}" data-abs="${x}" aria-pressed="${st === x}"${x === "Alpha" && !S.isAdmin ? ' disabled title="Alpha hanya diisi atasan"' : ""}>${x || "Hadir"}</button>`).join("")}</div></div>
+        <div class="absmore" id="absMore" hidden><input type="text" id="absNote" placeholder="Keterangan (opsional), misalnya: cuti tahunan" value="${esc(ab ? ab.note : "")}" aria-label="Keterangan">
+        <label class="until">Sampai tanggal <input type="date" id="absUntil" min="${s}" value="${s}"></label><button type="button" class="pbtn" id="absSave">Simpan</button></div></div>`
+    : (st ? `<div class="absnote st-${st}"><b>${st}</b>${ab.note ? " · " + esc(ab.note) : ""}${st === "Alpha" && canEdit(c.id) ? " · hanya atasan yang bisa mengubah" : ""}</div>` : "");
+  const absMsg = st ? `<div class="empty">Tercatat <b>${st}</b> di tanggal ini, jadi report tidak perlu diisi.${absEditable ? " Pilih <b>Hadir</b> kalau ternyata tetap bekerja." : ""}</div>` : "";
+  const bindAbs = () => {
+    const box = $("absBox"); if (!box) return;
+    let pick = st;
+    box.addEventListener("click", ev => {
+      const ch = ev.target.closest("[data-abs]"); if (ch && !ch.disabled) {
+        pick = ch.dataset.abs; box.querySelectorAll("[data-abs]").forEach(x => x.setAttribute("aria-pressed", x === ch));
+        if (!pick) { saveAbsence(c.id, [s], "", ""); return; }
+        $("absMore").hidden = false; $("absNote").focus(); return;
+      }
+      if (ev.target.id === "absSave") {
+        const until = $("absUntil").value && $("absUntil").value >= s ? $("absUntil").value : s, dates = [];
+        for (let d = s; d <= until && dates.length < 31; d = add(d, 1)) if (pd(d).getDay() !== 0 || d === s) dates.push(d);
+        saveAbsence(c.id, dates, pick, $("absNote").value.trim());
+      }
+    });
+  };
   if (!b) {
     const es = ents(s, s, { cc: c.id, brand: "" }).sort((x, y) => CODES.indexOf(x.brand) - CODES.indexOf(y.brand));
-    p.innerHTML = `<div class="dhead"><span class="dayname">${longDate(s)}</span><span class="sub">${esc(c.name)} · semua brand</span></div>
+    p.innerHTML = `<div class="dhead"><span class="dayname">${longDate(s)}</span><span class="sub">${esc(c.name)} · semua brand</span></div>${absBlock}
       ${es.length ? `<div class="ro">${es.map(e => entryBlock(e, c)).join('<hr style="border:0;border-top:1px solid var(--hair);margin:4px 0">')}</div>` : `<div class="empty">Belum ada report tanggal ini.</div>`}
       <p class="hint">${canEdit(c.id) ? "Pilih satu brand di bagian <b>Pilih brand</b> untuk mengisi atau mengubah report." : ""}</p>`;
+    bindAbs();
     return;
   }
-  const e = S.entries[ekey(c.id, s, b)] || {}, t = tgt(c.id, b, wk), dT = t / 6;
+  const e = S.entries[ekey(c.id, s, b)] || {}, t = tgt(c.id, b, wk), tE = tgtEff(c.id, b, wk), dT = t / 6;
   const tgtBox = S.isAdmin
-    ? `<div class="tgtbox"><label for="wkT"><b style="font-family:var(--display)">Target ${b}</b> minggu ${shortD(wk)} – ${shortD(add(wk, 6))}</label><input type="number" id="wkT" min="0" value="${t || ""}" placeholder="–" data-tcc="${esc(c.id)}" data-tb="${b}" data-tw="${wk}"><span class="sub">${u} · diisi atasan</span></div>`
-    : `<div class="tgtbox"><span><b style="font-family:var(--display)">Target ${b}</b> minggu ini</span><b>${t ? t + " " + u : "Belum diisi atasan"}</b>${t ? `<span class="sub">± ${fmt(dT)} ${u}/hari</span>` : ""}</div>`;
-  const head = `<div class="dhead"><span class="dayname">${longDate(s)}</span><span class="bbadge">${b} <small>${esc(BNAME[b])}</small></span></div>${tgtBox}`;
+    ? `<div class="tgtbox"><label for="wkT"><b style="font-family:var(--display)">Target ${b}</b> minggu ${shortD(wk)} – ${shortD(add(wk, 6))}</label><input type="number" id="wkT" min="0" value="${t || ""}" placeholder="–" data-tcc="${esc(c.id)}" data-tb="${b}" data-tw="${wk}"><span class="sub">${u} · diisi atasan${t && tE !== t ? ` · efektif ${tE} (ada cuti/izin/sakit)` : ""}</span></div>`
+    : `<div class="tgtbox"><span><b style="font-family:var(--display)">Target ${b}</b> minggu ini</span><b>${t ? tE + " " + u : "Belum diisi atasan"}</b>${t ? `<span class="sub">± ${fmt(dT)} ${u}/hari${tE !== t ? ` · disesuaikan dari ${t} karena cuti/izin/sakit` : ""}</span>` : ""}</div>`;
+  const head = `<div class="dhead"><span class="dayname">${longDate(s)}</span><span class="bbadge">${b} <small>${esc(BNAME[b])}</small></span></div>${absBlock}${tgtBox}`;
 
   if (!canEdit(c.id)) {
-    p.innerHTML = head + (e.updatedAt ? `<div class="ro">${entryBlock(e, c)}</div>` : `<div class="empty">${esc(c.name)} belum mengisi report ${b} tanggal ini.</div>`) + `<p class="hint">Hanya ${esc(c.name)} dan atasan yang bisa mengisi report ini.</p>`;
+    p.innerHTML = head + (e.updatedAt ? `<div class="ro">${entryBlock(e, c)}</div>` : (st ? "" : `<div class="empty">${esc(c.name)} belum mengisi report ${b} tanggal ini.</div>`)) + `<p class="hint">Hanya ${esc(c.name)} dan atasan yang bisa mengisi report ini.</p>`;
     return;
+  }
+  if (st && !e.updatedAt) { p.innerHTML = head + absMsg; bindAbs(); return;
   }
 
   const stepper = (id, val, label) => `<div class="stepper"><button type="button" data-step="-1" data-for="${id}" aria-label="Kurangi ${label}">−</button><input type="number" id="${id}" min="0" inputmode="numeric" value="${+val || 0}" aria-label="${label}"><button type="button" data-step="1" data-for="${id}" aria-label="Tambah ${label}">+</button></div>`;
@@ -332,6 +450,8 @@ function renderDay() {
         <div class="field"><label class="lbl" for="sIn">Solusi</label><textarea id="sIn" class="short" placeholder="Langkah yang diambil">${esc(e.solusi || "")}</textarea></div></div>
       <div class="field"><label class="lbl" for="oIn">Lembur (jam)</label><input type="number" id="oIn" min="0" step="0.5" inputmode="decimal" value="${+e.lembur || ""}" placeholder="0">
         <div class="otsum"><span>Lembur minggu ini: <b>${fmt(otSum(c.id, wk, add(wk, 6)))} jam</b></span><span>Bulan ini: <b>${fmt(otSum(c.id, s.slice(0, 7) + "-01", s.slice(0, 7) + "-31"))} jam</b></span><span>(semua brand)</span></div></div>
+      ${e.updatedAt && brandsOf(c).length > 1 ? `<details class="move"><summary>Salah pilih brand? Pindahkan report ini</summary>
+        <div class="moverow"><span class="sub">Pindahkan report ${b} tanggal ini ke</span><select id="mvTo" aria-label="Brand tujuan">${brandsOf(c).filter(x => x !== b).map(x => `<option value="${x}">${x} · ${esc(BNAME[x])}</option>`).join("")}</select><button type="button" class="ghostbtn" id="mvBtn">Pindahkan</button></div></details>` : ""}
       <div class="saverow"><span class="saved" id="saveState">${e.updatedAt ? "Tersimpan " + new Date(e.updatedAt).toTimeString().slice(0, 5) : "Tersimpan otomatis saat diisi"}</span><button class="pbtn" type="submit">Simpan report</button></div>
     </form>`;
 
@@ -354,12 +474,15 @@ function renderDay() {
     const ch = ev.target.closest(".chip"); if (ch) { ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") !== "true"); if (ch.dataset.v === "Campaign") $("campBox").hidden = ch.getAttribute("aria-pressed") !== "true"; schedule(); return; }
     if (ev.target.id === "addLink") { $("links").insertAdjacentHTML("beforeend", linkRow("")); $("links").lastElementChild.querySelector("input").focus(); return; }
     const r = ev.target.closest("[data-rmlink]"); if (r) { const rows = $("links").children; if (rows.length > 1) r.parentElement.remove(); else rows[0].querySelector("input").value = ""; schedule(); }
+    if (ev.target.id === "mvBtn") { if (AUTO.flush) AUTO.flush(); moveEntry(cc, s, b, $("mvTo").value); }
   });
+  f.querySelectorAll("#mvTo").forEach(x => x.addEventListener("input", ev => ev.stopPropagation()));
   f.addEventListener("submit", ev => {
     ev.preventDefault(); clearTimeout(timer); AUTO.flush = null;
     const d = collect(); if (role === "dg" && d.jenis.includes("Campaign") && !d.campaign.length) { toast("Pilih jenis desain campaign-nya"); return; }
     saveEntry(cc, s, b, d, false);
   });
+  bindAbs();
 }
 
 /* ---------------- render: pengaturan atasan ---------------- */
@@ -370,7 +493,7 @@ function renderSettings() {
   $("ccList").innerHTML = S.ccs.length ? `<div class="ccrow cchead"><span>Nama</span><span>Jabatan</span><span>Brand yang dipegang</span><span>Gmail</span><span></span></div>` + S.ccs.map(c => `<div class="ccrow" data-id="${esc(c.id)}">
       <input type="text" value="${esc(c.name)}" data-f="name" data-cid="${esc(c.id)}" aria-label="Nama">
       <select data-f="jabatan" data-cid="${esc(c.id)}" aria-label="Jabatan ${esc(c.name)}">${jab(c.jabatan)}</select>
-      <div class="bchips" data-cid="${esc(c.id)}">${bchips(c.brand)}</div>
+      <div class="bchips" data-cid="${esc(c.id)}">${bchips(c.brand)}${roleOf(c) === "dg" ? `<span class="dgnote">brand utama · DG bisa isi semua brand</span>` : ""}</div>
       <input type="text" value="${esc(c.email || "")}" data-f="email" data-cid="${esc(c.id)}" placeholder="nama@gmail.com" aria-label="Gmail ${esc(c.name)}" inputmode="email">
       <button class="x${S.armed === c.id ? " confirm" : ""}" data-rm="${esc(c.id)}">${S.armed === c.id ? "Hapus?" : "Hapus"}</button></div>`).join("") : `<div class="hint">Belum ada anggota.</div>`;
   const nb = $("ccBrand"); nb.innerHTML = bchips(nb.dataset.val);
@@ -382,7 +505,8 @@ function renderAll() {
   const key = [S.view, S.sel, curBrand(), S.ccs.length, S.isAdmin].join("|"), dp = $("dayPanel");
   if (!(dp.contains(document.activeElement) && key === lastDay && document.activeElement.tagName !== "BUTTON")) renderDay();
   lastDay = key;
-  if (!$("setBox").contains(document.activeElement)) renderSettings();
+  const ae = document.activeElement;
+  if (!($("setBox").contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) renderSettings();
 }
 
 /* ---------------- koneksi ke Google Sheets ---------------- */
@@ -413,6 +537,25 @@ function saveTarget(cc, b, wk, val) {
     .then(() => { if (S.pendingT[id] === v) delete S.pendingT[id]; toast(`Target ${b} minggu ${shortD(wk)} tersimpan`); renderAll(); })
     .catch(e => { delete S.pendingT[id]; toast(errMsg(e, "Hanya atasan yang bisa mengisi target")); });
 }
+function saveAbsence(cc, dates, status, note) {
+  const prev = {};
+  dates.forEach(d => { const k = cc + "_" + d; prev[k] = S.absen[k]; if (status) S.absen[k] = S.pendingA[k] = { cc, date: d, status, note, by: S.email, updatedAt: new Date().toISOString() }; else { delete S.absen[k]; S.pendingA[k] = null; } });
+  lastDay = ""; renderAll();
+  api("saveAbsence", { cc, dates, status, note })
+    .then(() => { dates.forEach(d => delete S.pendingA[cc + "_" + d]); toast(status ? `${status} tercatat${dates.length > 1 ? " untuk " + dates.length + " hari" : ""}` : "Kehadiran diubah menjadi Hadir"); })
+    .catch(e => { Object.entries(prev).forEach(([k, v]) => { delete S.pendingA[k]; if (v) S.absen[k] = v; else delete S.absen[k]; }); lastDay = ""; renderAll(); toast(e && e.detail === "alpha_admin_only" ? "Alpha hanya bisa diisi atau diubah atasan" : errMsg(e, "Kamu hanya bisa mengisi kehadiranmu sendiri")); });
+}
+async function moveEntry(cc, s, from, to) {
+  const k = ekey(cc, s, from), nk = ekey(cc, s, to);
+  if (S.entries[nk]) { toast(`Sudah ada report ${to} di tanggal ini. Hapus isinya dulu atau pilih brand lain.`); return; }
+  try {
+    await (qE[k] || Promise.resolve());
+    await api("moveEntry", { cc, date: s, from, to });
+    const e = S.entries[k]; delete S.entries[k]; delete S.pending[k];
+    if (e) S.entries[nk] = { ...e, brand: to, key: nk };
+    S.brandSel[S.view] = to; lastDay = ""; renderAll(); toast(`Report dipindahkan ke ${to}`);
+  } catch (e) { toast(e && e.detail === "target_exists" ? `Sudah ada report ${to} di tanggal ini` : errMsg(e, "Kamu tidak bisa memindahkan report ke brand itu")); }
+}
 function saveCfg() {
   renderAll(); S.teamDirty++;
   const ccs = S.ccs.map(c => ({ id: c.id, name: c.name, jabatan: c.jabatan || "Content Creator", brand: brandList(c.brand).join(", "), email: low(c.email) }));
@@ -438,6 +581,7 @@ async function refresh() {
   if (!S.teamDirty) S.ccs = (r.ccs || []).map(c => ({ ...c }));
   const ent = {}; (r.entries || []).forEach(e => { ent[ekey(e.cc, e.date, e.brand)] = e; }); Object.assign(ent, S.pending); S.entries = ent;
   const tg = {}; (r.targets || []).forEach(t => { tg[t.cc + "_" + t.brand + "_" + t.week] = t; }); Object.assign(tg, S.pendingT); S.targets = tg;
+  const ab = {}; (r.absences || []).forEach(a => { ab[a.cc + "_" + a.date] = a; }); Object.entries(S.pendingA).forEach(([k, v]) => { if (v) ab[k] = v; else delete ab[k]; }); S.absen = ab;
   const first = !S.ready; S.ready = true;
   if (first) {
     if (S.view && !ccById(S.view)) S.view = "";
@@ -487,7 +631,7 @@ async function onCredential(resp) {
 }
 function logout() {
   SESSION = ""; ls.del("sess"); ls.del("view");
-  S.ready = false; S.email = ""; S.entries = {}; S.targets = {}; S.ccs = []; S.view = ""; S.me = "";
+  S.ready = false; S.email = ""; S.entries = {}; S.targets = {}; S.absen = {}; S.ccs = []; S.view = ""; S.me = "";
   if (window.google?.accounts?.id) google.accounts.id.disableAutoSelect();
   showLogin();
 }
@@ -517,7 +661,8 @@ document.addEventListener("click", e => {
   const ph = e.target.closest("[data-photo]"); if (ph) { const inp = $("photoIn"); inp.dataset.cc = ph.dataset.photo; inp.value = ""; inp.click(); return; }
   const bt = e.target.closest("[data-btab]"); if (bt) { flushAuto(); S.brandSel[S.view] = bt.dataset.btab; lastDay = ""; renderAll(); return; }
 });
-$("photoIn").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; if (f) uploadPhoto(e.target.dataset.cc, f); });
+$("photoIn").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; if (f) openCropper(e.target.dataset.cc, f); });
+cropInit();
 $("ccSel").addEventListener("change", e => openView(e.target.value));
 $("brandF").addEventListener("change", e => { S.brandF = e.target.value; ls.set("brandF", S.brandF); renderAll(); });
 document.addEventListener("change", e => { const t = e.target.closest("[data-tcc]"); if (t) saveTarget(t.dataset.tcc, t.dataset.tb, t.dataset.tw, t.value); });
@@ -547,6 +692,7 @@ $("ccList").addEventListener("change", e => {
   const f = t.dataset.f, v = f === "email" ? low(t.value) : t.value.trim();
   if (f === "email" && v && S.ccs.some(x => x !== c && low(x.email) === v)) { toast("Gmail itu sudah dipakai anggota lain"); t.value = c.email || ""; return; }
   if (f === "name" && !v) { t.value = c.name; return; }
+  if (c[f] === v) return;
   c[f] = v; t.blur(); saveCfg();
 });
 $("ccList").addEventListener("click", e => {
@@ -587,13 +733,13 @@ async function exportXlsx() {
     const rk = wb.addWorksheet("Rekap", { views: [{ state: "frozen", ySplit: 3 }] });
     const rkCols = [["Nama", 22], ["Jabatan", 17], ["Brand", 9], ["Satuan", 9], ["Target bulan*", 12], ["Total", 10], ["Capaian", 10], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Hari mengisi", 11], ["Lembur (jam)", 11], ["Kendala", 9]];
     rk.columns = rkCols.map(c => ({ width: c[1] })); title(rk, "REKAP DAILY REPORT – ALL CREATIVE · " + periode.toUpperCase(), rkCols.length);
-    rk.getCell("A2").value = "* Target bulan = jumlah target mingguan (Senin–Minggu) yang diisi atasan untuk minggu-minggu di bulan ini"; rk.getCell("A2").font = { italic: true, size: 9, color: { argb: "FF6A6C78" } };
+    rk.getCell("A2").value = "* Target bulan = jumlah target mingguan (Senin–Minggu) yang diisi atasan, sudah dikurangi hari cuti/izin/sakit"; rk.getCell("A2").font = { italic: true, size: 9, color: { argb: "FF6A6C78" } };
     rk.getRow(3).values = rkCols.map(c => c[0]); head(rk.getRow(3));
     let r = 4;
     S.ccs.forEach((c, ci) => {
       const role = roleOf(c);
       brandsOf(c).forEach(b => {
-        const es = inMonth.filter(e => e.cc === c.id && e.brand === b), tb = mons.reduce((a, w) => a + tgt(c.id, b, w), 0), tot = sum(es, "qty");
+        const es = inMonth.filter(e => e.cc === c.id && e.brand === b), tb = mons.reduce((a, w) => a + tgtEff(c.id, b, w), 0), tot = sum(es, "qty");
         if (!es.length && !tb) return;
         const row = rk.getRow(r++);
         row.values = [c.name, c.jabatan || "", b, UNIT[role], tb, tot, tb ? tot / tb : "", role === "admin" ? sum(es, "fb") : "", role === "admin" ? sum(es, "yt") : "", role === "admin" ? sum(es, "shopee") : "", new Set(es.map(e => e.date)).size, sum(es, "lembur"), es.filter(e => e.kendala).length];
@@ -616,7 +762,7 @@ async function exportXlsx() {
     const smT = sm.getRow(4 + mons.length); smT.values = ["Total " + BULAN[m - 1], "tanggal 1–" + pd(last).getDate(), ...agg(inMonth)]; paint(smT, BLUE, { bold: true, color: { argb: "FFFFFFFF" } });
 
     // 3. Sheet per orang
-    const used = new Set(["Rekap", "Ringkasan Mingguan", "Raw Data"]);
+    const used = new Set(["Rekap", "Ringkasan Mingguan", "Raw Data", "Kehadiran"]);
     S.ccs.forEach(c => {
       let nm = (c.name || "CC").replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 31).trim() || "CC"; let k = 2; while (used.has(nm)) nm = nm.slice(0, 28) + " " + (k++); used.add(nm);
       const role = roleOf(c), u = UNIT[role], bs = brandsOf(c);
@@ -634,7 +780,7 @@ async function exportXlsx() {
       ws.getRow(7).values = cols.map(x => x[0]); head(ws.getRow(7));
       let row = 8, no = 0, wkN = 1, wT = 0, wO = 0, mT = 0, mO = 0;
       const subtotal = s => {
-        const wk = monday(s), t = bs.reduce((a, b) => a + tgt(c.id, b, wk), 0), rr = ws.getRow(row++), v = [];
+        const wk = monday(s), t = bs.reduce((a, b) => a + tgtEff(c.id, b, wk), 0), rr = ws.getRow(row++), v = [];
         v[2] = "Total minggu ke-" + wkN; v[iQty] = wT; v[iT] = t || ""; v[iSt] = t ? (wT >= t ? "Tercapai" : "Kurang " + (t - wT)) : "Target belum diisi"; v[iOt] = wO; rr.values = v;
         ws.mergeCells(rr.number, 2, rr.number, 4); paint(rr, SUBT, { bold: true });
         rr.getCell(iSt).font = { bold: true, color: { argb: t && wT >= t ? "FF3D7B52" : "FFB23B32" } }; wkN++; wT = 0; wO = 0;
@@ -645,16 +791,18 @@ async function exportXlsx() {
         (es.length ? es : [null]).forEach(e => {
           no++;
           const dT = e ? Math.round(tgt(c.id, e.brand, wk) / 6 * 10) / 10 : 0;
-          const st = e ? (dT ? (e.qty >= dT ? "Capai target" : "Di bawah target") : "Terisi") : (sun ? "Libur" : "Belum diisi");
+          const ab = absOf(c.id, s);
+          const st = e ? (dT ? (e.qty >= dT ? "Capai target" : "Di bawah target") : "Terisi") : ab ? ab.status : (sun ? "Libur" : "Belum diisi");
           const vals = [no, HARI[d.getDay()], xd(s), e ? e.brand : ""];
           if (role === "admin") vals.push(e ? e.fb : "", e ? e.yt : "", e ? e.shopee : "", e ? e.qty : "");
           else if (role === "dg") vals.push(e ? e.qty : "", e ? (e.jenis || []).join(" + ") : "", e ? (e.campaign || []).join(", ") : "");
           else vals.push(e ? e.qty : "");
-          vals.push(dT || "", st, e ? e.tugas || "" : "", "", e ? e.kendala || "" : "", e ? e.solusi || "" : "", e ? +e.lembur || 0 : "", e ? fmtTs(e.updatedAt) : "");
+          vals.push(dT || "", st, e ? e.tugas || "" : (ab ? ab.note || "" : ""), "", e ? e.kendala || "" : "", e ? e.solusi || "" : "", e ? +e.lembur || 0 : "", e ? fmtTs(e.updatedAt) : "");
           const rr = ws.getRow(row++); rr.values = vals; rr.getCell(3).numFmt = "dd/mm/yyyy";
           rr.eachCell({ includeEmpty: true }, x => { x.border = box; x.alignment = { vertical: "top", wrapText: true }; });
-          rr.getCell(iSt).font = { bold: true, color: { argb: st === "Capai target" ? "FF3D7B52" : st === "Di bawah target" ? "FF9C6A12" : "FF8A8FA3" } };
-          if (sun && !e) paint(rr, GREY);
+          rr.getCell(iSt).font = { bold: true, color: { argb: st === "Capai target" ? "FF3D7B52" : st === "Di bawah target" ? "FF9C6A12" : st === "Alpha" ? "FFB23B32" : "FF8A8FA3" } };
+          if (sun && !e && !ab) paint(rr, GREY);
+          if (!e && ab) paint(rr, ab.status === "Alpha" ? "FFF6DEDC" : "FFFBEFD6");
           if (e) { setLink(rr.getCell(iLink), e.links || []); if (e.kendala) rr.getCell(iKend).fill = fillC("FFFBEFD6"); wT += e.qty; wO += +e.lembur || 0; mT += e.qty; mO += +e.lembur || 0; }
         });
         if (sun || s === last) subtotal(s);
@@ -665,7 +813,20 @@ async function exportXlsx() {
       ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
     });
 
-    // 4. Raw data
+    // 4. Kehadiran
+    const kh = wb.addWorksheet("Kehadiran");
+    const khCols = [["Nama", 22], ["Jabatan", 17], ["Cuti", 8], ["Izin", 8], ["Sakit", 8], ["Alpha", 8], ["Total", 8], ["Rincian tanggal", 70]];
+    kh.columns = khCols.map(c => ({ width: c[1] })); title(kh, "KEHADIRAN · " + periode.toUpperCase(), khCols.length);
+    kh.getRow(3).values = khCols.map(c => c[0]); head(kh.getRow(3));
+    S.ccs.forEach((c, i) => {
+      const o = absCount(c.id, first, last), list = Object.values(S.absen).filter(a => a.cc === c.id && a.date >= first && a.date <= last).sort((a, b) => a.date.localeCompare(b.date));
+      const row = kh.getRow(4 + i);
+      row.values = [c.name, c.jabatan || "", o.Cuti, o.Izin, o.Sakit, o.Alpha, list.length, list.map(a => shortD(a.date) + " " + a.status + (a.note ? " (" + a.note + ")" : "")).join("; ")];
+      paint(row, i % 2 ? GREY : "FFFFFFFF"); row.getCell(8).alignment = { wrapText: true, vertical: "top" };
+    });
+    used.add("Kehadiran");
+
+    // 5. Raw data
     const raw = wb.addWorksheet("Raw Data", { views: [{ state: "frozen", ySplit: 1 }] });
     const rc = [["Tanggal", 12], ["Hari", 9], ["Nama", 20], ["Jabatan", 16], ["Brand", 8], ["Jumlah", 9], ["Satuan", 9], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Target minggu", 11], ["Jenis", 14], ["Desain campaign", 26], ["Tugas harian", 46], ["Link", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Diisi pada", 16]];
     raw.columns = rc.map(x => ({ width: x[1] })); raw.getRow(1).values = rc.map(x => x[0]); head(raw.getRow(1));
