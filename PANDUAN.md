@@ -288,6 +288,7 @@ Data semua orang diperbarui otomatis **setiap ±30 detik** di layar masing-masin
 | *Server belum siap: wrong_client* | `GOOGLE_CLIENT_ID` di `Code.gs` berbeda dengan di `config.js`. Samakan, simpan, lalu lakukan **Deploy ulang** (lihat bawah). |
 | *Respon bukan JSON* | Saat Deploy, *Who has access* belum diset ke **Anyone**, atau link yang disalin bukan yang berakhiran `/exec`. |
 | *Sesi login sudah berakhir* | Perangkat diingat 90 hari. Setelah itu, atau kalau atasan menjalankan menu *Keluarkan semua perangkat*, cukup login Gmail sekali lagi. |
+| *Batas waktu penguncian habis: proses lain menahan kunci terlalu lama* (saat menjalankan `setupAwal`) | Ada proses lain yang sedang merapikan Google Sheet. Tunggu 1–2 menit lalu jalankan `setupAwal` lagi. Mulai versi 2.2.1, `setupAwal` otomatis menunggu sampai 5 menit. |
 | Hanya akun tertentu yang bisa login / *Error 403: access_denied* | Aplikasi masih berstatus **Testing**. Pakai Cara A di Langkah 2 nomor 4 (Publish), atau tambahkan Gmail tersebut ke **Test users** (Cara B). |
 
 ### Mengubah `Code.gs` di kemudian hari (misalnya ganti Gmail atasan)

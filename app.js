@@ -562,14 +562,19 @@ function renderAll() {
 /* ---------------- koneksi ke Google Sheets ---------------- */
 async function api(action, payload = {}, noSession) {
   if (!noSession && !SESSION) { showLogin(); throw { error: "auth" }; }
-  let res;
-  try { res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify({ action, session: SESSION, ...payload }) }); }
-  catch (e) { throw { error: "network" }; }
-  let j; try { j = await res.json(); } catch (e) { throw { error: "server", detail: "Respon bukan JSON. Cek Deploy Apps Script (akses: Anyone)." }; }
+  let res, j;
+  for (let attempt = 0; ; attempt++) {
+    try { res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify({ action, session: SESSION, ...payload }) }); }
+    catch (e) { throw { error: "network" }; }
+    try { j = await res.json(); } catch (e) { throw { error: "server", detail: "Respon bukan JSON. Cek Deploy Apps Script (akses: Anyone)." }; }
+    // Google Sheet sedang dirapikan: tunggu sebentar lalu coba lagi otomatis
+    if (j && j.error === "busy" && attempt < 4) { const ss = $("saveState"); if (ss) ss.textContent = "Menunggu Google Sheet…"; await new Promise(r => setTimeout(r, 3000 + attempt * 2000)); continue; }
+    break;
+  }
   if (j && j.error) { if (j.error === "auth" && !noSession) { SESSION = ""; ls.del("sess"); showLogin("Sesi login sudah berakhir. Silakan masuk lagi dengan Gmail."); } throw j; }
   return j;
 }
-const errMsg = (e, own) => e && e.error === "forbidden" ? own : e && e.error === "network" ? "Gagal tersambung, periksa koneksi internet" : e && e.error === "auth" ? "Silakan masuk lagi" : "Gagal menyimpan, coba lagi";
+const errMsg = (e, own) => e && e.error === "busy" ? "Google Sheet sedang dirapikan, coba simpan lagi sebentar" : e && e.error === "forbidden" ? own : e && e.error === "network" ? "Gagal tersambung, periksa koneksi internet" : e && e.error === "auth" ? "Silakan masuk lagi" : "Gagal menyimpan, coba lagi";
 
 const qE = {}, qT = {}; let qC = Promise.resolve();
 function saveEntry(cc, s, b, d, silent) {

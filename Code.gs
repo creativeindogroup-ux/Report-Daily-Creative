@@ -23,7 +23,7 @@ const SESSION_DAYS = 90;
 // ================================================
 
 const TZ = "Asia/Jakarta";
-const VERSION = "v2.2";
+const VERSION = "v2.2.1";
 const BRAND_CODES = ["OLV", "KNG", "77", "MTR", "IDN", "RS", "TKS"];
 const BRAND_NAMES = { OLV: "Batik Oliver", KNG: "Kenangan Fashion", "77": "Batik 77", MTR: "Batik Menteri", IDN: "Batik Indonesia", RS: "Batik Rama Shinta", TKS: "Batik Taksaka" };
 const JABATAN = ["Content Creator", "Desain Grafis", "Admin", "HR", "Content Director", "Manajer Live dan Video"];
@@ -57,7 +57,7 @@ function doGet() {
 function doPost(e) {
   try {
     const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
-    ensureSheets_();
+    ensureSheets_(false);
 
     if (req.action === "login") {
       const email = verifyGoogle_(req.idToken);
@@ -90,6 +90,7 @@ function doPost(e) {
     const msg = String(err && err.message || err);
     if (msg.indexOf("AUTH:") === 0) return json_({ error: "auth", detail: msg.slice(5) });
     if (msg.indexOf("FORBIDDEN:") === 0) return json_({ error: "forbidden", detail: msg.slice(10) });
+    if (msg.indexOf("BUSY:") === 0) return json_({ error: "busy", detail: "Google Sheet sedang dirapikan, coba lagi sebentar." });
     return json_({ error: "server", detail: msg });
   }
 }
@@ -229,7 +230,6 @@ function saveEntry_(ctx, e) {
     upsert_(SH.db, r => String(r[0]) === row[0], row);
     rebuildPerson_(m);
     markDirty_();
-    maybeRebuildAll_();
   });
   return { ok: true, updatedAt: new Date().toISOString(), lemburStatus: lemburStatus };
 }
@@ -261,7 +261,9 @@ function saveTeam_(ctx, ccs) {
     if (last > 1) sh.getRange(2, 1, last - 1, SH.team.head.length).clearContent();
     if (rows.length) sh.getRange(2, 1, rows.length, SH.team.head.length).setValues(rows);
     fixMigrated_(readTeam_());
-    rapikan_();
+    // tab per orang & "Semua Report" dirapikan oleh jadwal otomatis (≤ 5 menit) supaya website tetap cepat
+    PropertiesService.getScriptProperties().setProperty("needFull", "1");
+    markDirty_();
   });
   return { ok: true };
 }
@@ -729,11 +731,16 @@ function fixMigrated_(team) {
 
 /* ======================= STRUKTUR SHEET & MIGRASI ======================= */
 
-function ensureSheets_() {
+/**
+ * Menyiapkan struktur sheet versi terbaru.
+ * full = true (dari setupAwal): sekalian merapikan semua tab, boleh menunggu lama.
+ * full = false (dari website): hanya struktur & migrasi ringan, perapian diserahkan ke jadwal otomatis.
+ */
+function ensureSheets_(full) {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty("ready") === VERSION) return;
+  if (!full && props.getProperty("ready") === VERSION) return;
   withLock_(() => {
-    if (props.getProperty("ready") === VERSION) return;
+    if (!full && props.getProperty("ready") === VERSION) return;
     const ss = SpreadsheetApp.getActive();
     try { ss.setSpreadsheetTimeZone(TZ); } catch (x) { }
     const oldTarget = ss.getSheetByName("Target Mingguan");
@@ -781,9 +788,11 @@ function ensureSheets_() {
     // lembur dari versi sebelumnya (belum ada status) dianggap sudah disetujui
     const dbs = sheet_(SH.db), dbr = rows_(SH.db);
     dbr.forEach((r, i) => { if (Number(r[14]) > 0 && !String(r[17] || "")) dbs.getRange(i + 2, 18).setValue("acc"); });
-    if (readTeam_().length) { fixMigrated_(readTeam_()); rapikan_(); } else reorder_([]);
+    if (readTeam_().length) fixMigrated_(readTeam_());
+    if (full) { if (readTeam_().length) rapikan_(); else reorder_([]); props.setProperty("needFull", "0"); }
+    else { props.setProperty("needFull", "1"); props.setProperty("dirty", "1"); }
     props.setProperty("ready", VERSION);
-  });
+  }, full ? 300000 : 8000);
 }
 
 /* ================================ BANTUAN ================================ */
@@ -831,9 +840,10 @@ function upsert_(def, match, row) {
   }
   sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
 }
-function withLock_(fn) {
+/** Jalankan fn dengan kunci. waitMs = berapa lama menunggu proses lain selesai. */
+function withLock_(fn, waitMs) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(25000);
+  if (!lock.tryLock(waitMs || 25000)) throw new Error("BUSY:lock");
   try { fn(); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
 }
 function d_(v) {
@@ -854,8 +864,7 @@ function json_(obj) { return ContentService.createTextOutput(JSON.stringify(obj)
 
 /** Jalankan SEKALI dari editor (pilih "setupAwal" lalu ▶ Run) setiap kali Code.gs diperbarui. */
 function setupAwal() {
-  PropertiesService.getScriptProperties().deleteProperty("ready");
-  ensureSheets_();
+  ensureSheets_(true);
   photoFolder_();
   UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?id_token=x", { muteHttpExceptions: true });
   ScriptApp.getProjectTriggers().forEach(t => { if (t.getHandlerFunction() === "autoRapikan") ScriptApp.deleteTrigger(t); });
@@ -865,12 +874,19 @@ function setupAwal() {
 
 /** Dijalankan otomatis tiap 5 menit: merapikan tab "Semua Report" kalau ada isian baru. */
 function autoRapikan() {
-  if (PropertiesService.getScriptProperties().getProperty("dirty") !== "1") return;
-  withLock_(() => { rebuildAll_(); PropertiesService.getScriptProperties().setProperty("dirty", "0"); });
+  const p = PropertiesService.getScriptProperties();
+  if (p.getProperty("dirty") !== "1" && p.getProperty("needFull") !== "1") return;
+  try {
+    withLock_(() => {
+      if (p.getProperty("needFull") === "1") { rapikan_(); p.setProperty("needFull", "0"); }
+      else rebuildAll_();
+      p.setProperty("dirty", "0");
+    }, 5000);
+  } catch (e) { if (String(e.message).indexOf("BUSY:") !== 0) throw e; }   // sedang dipakai: coba lagi 5 menit kemudian
 }
 
 function rapikanSemua() {
-  withLock_(rapikan_);
+  withLock_(rapikan_, 300000);
   try { SpreadsheetApp.getActive().toast("Semua sheet sudah dirapikan.", "Daily Report", 5); } catch (x) { }
 }
 
@@ -883,7 +899,7 @@ function keluarkanSemuaPerangkat() {
 /** Memindahkan data versi 1 yang salah brand ke brand yang benar (sesuai sheet "Anggota"). */
 function perbaikiBrandDataLama() {
   let n = 0;
-  withLock_(() => { n = fixMigrated_(readTeam_()); rapikan_(); });
+  withLock_(() => { n = fixMigrated_(readTeam_()); rapikan_(); }, 300000);
   try { SpreadsheetApp.getActive().toast(n + " baris dipindahkan ke brand yang benar.", "Daily Report", 6); } catch (x) { }
 }
 
