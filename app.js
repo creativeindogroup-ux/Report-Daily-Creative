@@ -14,7 +14,10 @@ const STATUS = ["Cuti","Izin","Sakit","Alpha"];
 const CODES = BRANDS.map(b => b[0]);
 const BNAME = Object.fromEntries(BRANDS);
 const CAMP = ["Banner Marketplace","Sticker Live","Katalog Watermark","Thumbnail Live"];
-const JABATAN = ["Content Creator","Desain Grafis","Admin"];
+const JABATAN = ["Content Creator","Desain Grafis","Admin","HR","Content Director","Manajer Live dan Video"];
+const ROLE_ORDER = { cc: 0, dg: 1, admin: 2, sup: 3 };
+const ROLE_LABEL = { cc: "Content Creator", dg: "Desain Grafis", admin: "Admin", sup: "Pengawas" };
+const LSTAT = { acc: "Disetujui", pending: "Menunggu ACC", tolak: "Ditolak" };
 const UNIT = { cc: "video", dg: "desain", admin: "upload" };
 const HARI = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
 const BULAN = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
@@ -51,7 +54,16 @@ let SESSION = ls.get("sess") || "";
 
 function toast(m) { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
 const ccById = id => S.ccs.find(c => c.id === id);
-const roleOf = c => { const j = String(c && c.jabatan || ""); return /desain|design|graf/i.test(j) ? "dg" : /admin/i.test(j) ? "admin" : "cc"; };
+/** cc / dg / admin mengisi report; sup = pengawas (HR, Content Director, Manajer, lainnya) hanya memantau */
+const roleOf = c => { const j = String(c && c.jabatan || "").trim(); return !j || /creator|^cc$/i.test(j) ? "cc" : /desain|design|graf/i.test(j) ? "dg" : /^admin/i.test(j) ? "admin" : "sup"; };
+const teamSort = (a, b) => (ROLE_ORDER[roleOf(a)] - ROLE_ORDER[roleOf(b)]) || a.name.localeCompare(b.name, "id", { sensitivity: "base" });
+/** anggota yang wajib mengisi report (tanpa pengawas) */
+const workers = () => S.ccs.filter(c => roleOf(c) !== "sup");
+/** lembur hanya dihitung kalau sudah disetujui */
+const lstat = e => +e.lembur > 0 ? (e.lemburStatus || "acc") : "";
+const otA = e => lstat(e) === "acc" ? +e.lembur || 0 : 0;
+const sumOt = arr => arr.reduce((a, e) => a + otA(e), 0);
+const sumPend = arr => arr.reduce((a, e) => a + (lstat(e) === "pending" ? +e.lembur || 0 : 0), 0);
 const brandCode = t => { const x = String(t || "").trim(); if (!x) return ""; if (CODES.includes(x.toUpperCase())) return x.toUpperCase(); const lo = x.toLowerCase().replace(/\s+/g, " "); const h = BRAND_ALIAS.find(a => a[1].test(lo) || a[1].test(lo.replace(/^batik\s+/, ""))); return h ? h[0] : ""; };
 const brandList = v => { const o = []; String(v || "").split(/[,\/;+|\n]/).map(brandCode).forEach(b => { if (b && !o.includes(b)) o.push(b); }); return o.sort((a, b) => CODES.indexOf(a) - CODES.indexOf(b)); };
 /** brand yang boleh diisi: Desain Grafis bebas 7 brand, yang lain sesuai pengaturan atasan (kosong = semua) */
@@ -84,7 +96,7 @@ const sum = (arr, k) => arr.reduce((a, e) => a + (+e[k] || 0), 0);
 /** target harian/mingguan untuk filter aktif */
 function scopeTarget(wk, sc = scope()) {
   if (sc.cc) { const c = ccById(sc.cc); return (sc.brand ? [sc.brand] : brandsOf(c)).reduce((a, b) => a + tgtEff(c.id, b, wk), 0); }
-  return S.ccs.reduce((a, c) => a + brandsOf(c).filter(b => !sc.brand || b === sc.brand).reduce((x, b) => x + tgtEff(c.id, b, wk), 0), 0);
+  return workers().reduce((a, c) => a + brandsOf(c).filter(b => !sc.brand || b === sc.brand).reduce((x, b) => x + tgtEff(c.id, b, wk), 0), 0);
 }
 /** brand yang ditampilkan di kartu rekap: DG = brand utama + brand yang ada isian/target */
 function homeBrands(c) {
@@ -94,7 +106,7 @@ function homeBrands(c) {
   CODES.forEach(b => { if (tgt(c.id, b, wk)) set.add(b); });
   return CODES.filter(b => set.has(b));
 }
-const membersInScope = () => S.ccs.filter(c => !S.brandF || homeBrands(c).includes(S.brandF) || (roleOf(c) === "dg" && !homeBrands(c).length));
+const membersInScope = () => workers().filter(c => !S.brandF || homeBrands(c).includes(S.brandF) || (roleOf(c) === "dg" && !homeBrands(c).length));
 const absCount = (cc, from, to) => { const o = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 }; Object.values(S.absen).forEach(a => { if (a.cc === cc && a.date >= from && a.date <= to && o[a.status] !== undefined) o[a.status]++; }); return o; };
 const absShort = o => STATUS.filter(k => o[k]).map(k => k[0] + o[k]).join(" · ");
 
@@ -105,7 +117,7 @@ function ava(c, cls = "") {
 }
 async function syncPhotos() {
   const need = [];
-  S.ccs.forEach(c => {
+  [...S.ccs, { id: "__cover", photoVer: S.coverVer }].forEach(c => {
     if (!c.photoVer) { delete S.photos[c.id]; return; }
     let cached = null; try { cached = JSON.parse(ls.get("ph_" + c.id) || "null"); } catch (e) { }
     if (cached && cached.v === c.photoVer) { S.photos[c.id] = cached.data; if (cached.big) S.photosBig[c.id] = cached.big; } else need.push(c.id);
@@ -121,32 +133,36 @@ function loadImage(file) {
   return new Promise((res, rej) => { const url = URL.createObjectURL(file); const img = new Image(); img.onload = () => { URL.revokeObjectURL(url); res(img); }; img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("img")); }; img.src = url; });
 }
 /* editor foto: geser, zoom (slider / scroll / cubit), putar */
-const CROP = { img: null, cc: "", zoom: 1, x: 0, y: 0, ptrs: new Map(), pinch: 0 };
-const VP = 560;
-function cropBase() { const i = CROP.img; return Math.max(VP / i.width, VP / i.height); }
+const CROP = { img: null, cc: "", zoom: 1, x: 0, y: 0, ptrs: new Map(), pinch: 0, w: 560, h: 560 };
+const VP = 560;   // lebar area kerja
+function cropBase() { const i = CROP.img; return Math.max(CROP.w / i.width, CROP.h / i.height); }
 function cropClamp() {
-  const i = CROP.img, sc = cropBase() * CROP.zoom, mx = Math.max(0, (i.width * sc - VP) / 2), my = Math.max(0, (i.height * sc - VP) / 2);
+  const i = CROP.img, sc = cropBase() * CROP.zoom, mx = Math.max(0, (i.width * sc - CROP.w) / 2), my = Math.max(0, (i.height * sc - CROP.h) / 2);
   CROP.x = Math.min(mx, Math.max(-mx, CROP.x)); CROP.y = Math.min(my, Math.max(-my, CROP.y));
 }
-function cropDraw(ctx, size, overlay) {
-  const i = CROP.img, k = size / VP, sc = cropBase() * CROP.zoom * k, w = i.width * sc, h = i.height * sc;
-  ctx.fillStyle = "#c6cee8"; ctx.fillRect(0, 0, size, size);
+function cropDraw(ctx, W, H, overlay) {
+  const i = CROP.img, k = W / CROP.w, sc = cropBase() * CROP.zoom * k, w = i.width * sc, h = i.height * sc;
+  ctx.fillStyle = "#c6cee8"; ctx.fillRect(0, 0, W, H);
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(i, size / 2 + CROP.x * k - w / 2, size / 2 + CROP.y * k - h / 2, w, h);
+  ctx.drawImage(i, W / 2 + CROP.x * k - w / 2, H / 2 + CROP.y * k - h / 2, w, h);
   if (overlay) {
-    const p = new Path2D(); p.rect(0, 0, size, size); p.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(35,37,47,.45)"; ctx.fill(p, "evenodd");
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2); ctx.stroke();
+    // garis bantu sepertiga
+    ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.5; ctx.beginPath();
+    [1, 2].forEach(n => { ctx.moveTo(W * n / 3, 0); ctx.lineTo(W * n / 3, H); ctx.moveTo(0, H * n / 3); ctx.lineTo(W, H * n / 3); });
+    ctx.stroke();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
   }
 }
-function cropRender() { cropClamp(); cropDraw($("cropCv").getContext("2d"), VP, true); $("cropZoom").value = CROP.zoom; }
-function cropExport(size, q) { const cv = document.createElement("canvas"); cv.width = cv.height = size; cropDraw(cv.getContext("2d"), size, false); return cv.toDataURL("image/jpeg", q); }
+function cropRender() { cropClamp(); cropDraw($("cropCv").getContext("2d"), CROP.w, CROP.h, true); $("cropZoom").value = CROP.zoom; }
+function cropExport(W, q) { const H = Math.round(W * CROP.h / CROP.w), cv = document.createElement("canvas"); cv.width = W; cv.height = H; cropDraw(cv.getContext("2d"), W, H, false); return cv.toDataURL("image/jpeg", q); }
 function fitJpeg(size, limit, q = 0.88) { let out; do { out = cropExport(size, q); q -= 0.08; if (q < 0.5) { size = Math.round(size * 0.85); q = 0.82; } } while (out.length > limit && size > 80); return out; }
 async function openCropper(cc, file) {
   if (!file || !/^image\//.test(file.type)) { toast("Pilih file gambar (JPG/PNG)"); return; }
   try { CROP.img = await loadImage(file); } catch (e) { toast("Gambar tidak bisa dibuka, coba file JPG/PNG lain"); return; }
   CROP.cc = cc; CROP.zoom = 1; CROP.x = 0; CROP.y = 0; CROP.ptrs.clear();
-  const c = ccById(cc); $("cropTitle").textContent = "Atur foto" + (c ? " " + c.name : "");
+  const isCover = cc === "__cover"; CROP.w = VP; CROP.h = isCover ? Math.round(VP * 9 / 16) : VP;
+  const cv = $("cropCv"); cv.width = CROP.w; cv.height = CROP.h; cv.classList.toggle("wide", isCover);
+  const c = ccById(cc); $("cropTitle").textContent = isCover ? "Atur cover beranda (16:9)" : "Atur foto" + (c ? " " + c.name : "") + " (1:1)";
   $("cropModal").hidden = false; document.body.style.overflow = "hidden"; cropRender(); $("cropSave").focus();
 }
 function closeCropper() { $("cropModal").hidden = true; document.body.style.overflow = ""; CROP.img = null; }
@@ -158,16 +174,18 @@ function cropRotate() {
 async function cropSave() {
   const cc = CROP.cc, btn = $("cropSave"); btn.disabled = true; btn.textContent = "Menyimpan…";
   try {
-    const thumb = fitJpeg(240, 47000), big = fitJpeg(720, 190000), full = cropExport(1000, 0.88);
+    const isCover = cc === "__cover";
+    const thumb = fitJpeg(isCover ? 400 : 240, 47000), big = fitJpeg(isCover ? 1280 : 720, 190000), full = isCover ? "" : cropExport(1000, 0.88);
     const r = await api("savePhoto", { cc, thumb, big, full });
+    if (isCover) S.coverVer = r.v;
     S.photos[cc] = thumb; S.photosBig[cc] = big; ls.set("ph_" + cc, JSON.stringify({ v: r.v, data: thumb, big }));
     const c = ccById(cc); if (c) c.photoVer = r.v;
-    closeCropper(); renderAll(); toast("Foto tersimpan");
+    closeCropper(); renderAll(); toast(isCover ? "Cover tersimpan" : "Foto tersimpan");
   } catch (e) { toast(e && e.error === "forbidden" ? "Kamu hanya bisa mengganti fotomu sendiri" : "Foto gagal disimpan, coba lagi"); }
   finally { btn.disabled = false; btn.textContent = "Simpan foto"; }
 }
 function cropInit() {
-  const cv = $("cropCv"), k = () => VP / cv.getBoundingClientRect().width;
+  const cv = $("cropCv"), k = () => CROP.w / cv.getBoundingClientRect().width;
   cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); CROP.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); CROP.pinch = 0; });
   cv.addEventListener("pointermove", e => {
     if (!CROP.ptrs.has(e.pointerId) || !CROP.img) return;
@@ -201,27 +219,27 @@ function cropInit() {
 function renderHero() {
   const h = $("hero"), [y, m] = S.month.split("-").map(Number), per = BULAN[m - 1] + " " + y;
   if (!S.view) {
-    const ms = S.ccs.slice(0, 6);
-    h.className = "hero" + (ms.length ? "" : " solo");
-    const me = ccById(S.me);
+    const me = ccById(S.me), cover = S.photosBig.__cover || S.photos.__cover;
+    h.className = "hero home";
     h.innerHTML = `<div class="hero-l"><span class="hpill">Divisi Creative Indogroup · ${per}</span>
       <h1>Daily Report<br>Creative</h1><p class="hsub">Rekap konten video, desain grafis dan upload admin untuk 7 brand.</p>
-      <div class="hfoot"><span class="arrow"></span>${me ? `<button class="pbtn" data-open="${esc(me.id)}">Isi report saya</button>` : ""}</div></div>
-      ${ms.length ? `<div class="hero-r mosaic" style="--mc:${ms.length <= 3 ? ms.length : ms.length === 4 ? 2 : 3}">${ms.map(c => `<button class="tile" data-open="${esc(c.id)}" aria-label="Buka report ${esc(c.name)}" style="border:0;padding:0;cursor:pointer">${S.photos[c.id] ? `<img src="${S.photos[c.id]}" alt="">` : `<span>${esc(initials(c.name))}</span>`}<em>${esc(c.name.split(" ")[0])}</em></button>`).join("")}</div>` : ""}`;
+      <div class="hfoot"><span class="arrow"></span>${me && roleOf(me) !== "sup" ? `<button class="pbtn" data-open="${esc(me.id)}">Isi report saya</button>` : ""}</div></div>
+      <div class="hero-r cover">${cover ? `<img class="coverimg" src="${cover}" alt="Cover tim Creative Indogroup">` : `<div class="coverph"><b>Cover tim</b><span>Foto 16:9, misalnya foto tim atau studio</span></div>`}
+      ${S.isAdmin ? `<button class="photo-btn" data-photo="__cover">${cover ? "Ganti cover" : "Tambah cover"}</button>` : ""}</div>`;
     return;
   }
   const c = ccById(S.view); if (!c) return;
-  h.className = "hero";
+  h.className = "hero person";
   h.innerHTML = `<div class="hero-l"><span class="eyebrow">${esc(c.jabatan || "Content Creator")}</span>
     <h1>${esc(c.name)}</h1><span class="hpill">${roleOf(c) === "dg" ? "Bisa mengisi semua brand" + (assignedOf(c).length ? " · utama " + assignedOf(c).join(", ") : "") : brandsOf(c).map(b => esc(b + " · " + BNAME[b])).join("&nbsp;&nbsp;|&nbsp;&nbsp;")}</span>
     <div class="hfoot"><span class="arrow"></span><button class="pbtn" data-home>Kembali ke All Creative</button></div></div>
-    <div class="hero-r">${S.photos[c.id] ? `<img class="bigphoto" src="${S.photosBig[c.id] || S.photos[c.id]}" alt="Foto ${esc(c.name)}">` : `<span class="initials">${esc(initials(c.name))}</span>`}
+    <div class="hero-r square">${S.photos[c.id] ? `<img class="bigphoto" src="${S.photosBig[c.id] || S.photos[c.id]}" alt="Foto ${esc(c.name)}">` : `<span class="initials">${esc(initials(c.name))}</span>`}
     ${canEdit(c.id) ? `<button class="photo-btn" data-photo="${esc(c.id)}">${S.photos[c.id] ? "Ganti foto" : "Tambah foto"}</button>` : ""}</div>`;
 }
 function renderNav() {
   const [y, m] = S.month.split("-").map(Number); $("monthLbl").textContent = BULAN[m - 1] + " " + y;
   const sel = $("ccSel");
-  sel.innerHTML = `<option value="">All Creative</option>` + S.ccs.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.id === S.me ? " (saya)" : ""}</option>`).join("");
+  sel.innerHTML = `<option value="">All Creative</option>` + workers().map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.id === S.me ? " (saya)" : ""}</option>`).join("");
   if (S.view && !ccById(S.view) && S.ready) S.view = "";
   sel.value = S.view;
   const bf = $("brandF"); bf.hidden = !!S.view;
@@ -236,7 +254,7 @@ function renderPeople() {
   const { first, last } = range(), wk = curWeek(), [y, m] = S.month.split("-").map(Number);
   $("rekapSub").textContent = `${BULAN[m - 1]} ${y} · minggu ${shortD(wk)} – ${shortD(add(wk, 6))}${S.brandF ? " · brand " + S.brandF + " (" + BNAME[S.brandF] + ")" : ""}`;
   const list = membersInScope();
-  if (!list.length) { $("people").innerHTML = `<div class="emptyband">${!S.ccs.length ? (S.isAdmin ? "Belum ada anggota. Tambahkan di Pengaturan atasan di bawah." : "Daftar anggota belum diisi atasan.") : "Belum ada anggota yang memegang brand ini."}</div>`; return; }
+  if (!list.length) { $("people").innerHTML = `<div class="emptyband">${!workers().length ? (S.isAdmin ? "Belum ada anggota. Tambahkan di Pengaturan atasan di bawah." : "Daftar anggota belum diisi atasan.") : "Belum ada anggota yang memegang brand ini."}</div>`; return; }
   $("people").innerHTML = list.map(c => {
     const role = roleOf(c), u = UNIT[role], bs = S.brandF ? [S.brandF] : homeBrands(c);
     const sc = { cc: c.id, brand: S.brandF };
@@ -255,7 +273,7 @@ function renderPeople() {
     return `<article class="pcard">
       <div class="phead">${ava(c)}<div style="min-width:0"><div class="pname">${esc(c.name)}</div><div class="prole">${esc(c.jabatan || "Content Creator")}</div></div></div>
       <div style="display:grid;gap:8px">${rows}</div>${plat}
-      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="ot"><b>${fmt(sum(month, "lembur"))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
+      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="ot"><b>${fmt(sumOt(month))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
       <div class="pfoot"><span class="last">${lf ? "Terakhir mengisi " + shortD(ds(lf)) + " " + pad(lf.getHours()) + ":" + pad(lf.getMinutes()) : `${days ? "" : "Belum mengisi bulan ini"}`}</span><button class="pbtn" data-open="${esc(c.id)}">Lihat report</button></div>
     </article>`;
   }).join("");
@@ -285,8 +303,8 @@ function renderPersonTop() {
       <div class="s">${!t ? (rawT ? "Target minggu ini 0 karena tidak masuk sepanjang minggu" : "Target minggu ini belum diisi atasan") : wv >= t ? "Target minggu ini tercapai" : "Kurang " + (t - wv) + " " + u + " lagi"}${off && rawT ? ` · target disesuaikan dari ${rawT} (${off} hari cuti/izin/sakit)` : ""}</div></div>
     <div class="stat"><div class="l">Total ${u} bulan ini${cur ? " · " + cur : ""}</div><div class="v num">${sum(mE, "qty")}</div>
       <div class="s">${role === "admin" ? `Facebook ${sum(mE, "fb")} · YouTube ${sum(mE, "yt")} · Shopee ${sum(mE, "shopee")}` : new Set(mE.map(e => e.date)).size + " hari ada isian"}</div></div>
-    <div class="stat ot"><div class="l">Total lembur bulan ini</div><div class="v num">${fmt(sum(otAll, "lembur"))}<small> jam</small></div>
-      <div class="s">${new Set(otAll.filter(e => +e.lembur > 0).map(e => e.date)).size} hari lembur · semua brand${(() => { const o = absCount(c.id, first, last); const t2 = absShort(o); return t2 ? " · " + STATUS.filter(k => o[k]).map(k => k + " " + o[k]).join(", ") : ""; })()}</div></div>`;
+    <div class="stat ot"><div class="l">Total lembur bulan ini</div><div class="v num">${fmt(sumOt(otAll))}<small> jam</small></div>
+      <div class="s">${new Set(otAll.filter(e => otA(e) > 0).map(e => e.date)).size} hari lembur${sumPend(otAll) ? ` · <b class="pend">+${fmt(sumPend(otAll))} j menunggu ACC</b>` : ""} · semua brand${(() => { const o = absCount(c.id, first, last); const t2 = absShort(o); return t2 ? " · " + STATUS.filter(k => o[k]).map(k => k + " " + o[k]).join(", ") : ""; })()}</div></div>`;
 }
 
 /* ---------------- render: kalender ---------------- */
@@ -297,12 +315,12 @@ function renderCal() {
   for (let mon = start; mon <= end; mon = add(mon, 7)) {
     const dT = scopeTarget(mon, sc) / 6;
     for (let i = 0; i < 7; i++) {
-      const s = add(mon, i), es = ents(s, s, sc), v = sum(es, "qty"), o = sum(es, "lembur"), sun = pd(s).getDay() === 0, out = s < first || s > last;
+      const s = add(mon, i), es = ents(s, s, sc), v = sum(es, "qty"), o = sumOt(es), sun = pd(s).getDay() === 0, out = s < first || s > last;
       const cls = ["cell", sun && "sun", out && "out", es.length && (dT && v >= dT ? "hit" : "has"), s === S.sel && "sel", s === TODAY && "today"].filter(Boolean).join(" ");
       let abd = "";
       if (sc.cc) { const a = absOf(sc.cc, s); if (a) abd = `<span class="abdg st-${a.status}">${a.status}</span>`; }
       else { const n = membersInScope().filter(c => absOf(c.id, s)).length; if (n) abd = `<span class="abdg">${n} absen</span>`; }
-      h += `<button class="${cls}${abd && sc.cc ? " absent" : ""}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten${o ? ", lembur " + fmt(o) + " jam" : ""}${abd ? ", " + abd.replace(/<[^>]+>/g, "") : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}</span>` : abd}${o ? `<span class="ot">+${fmt(o)}j</span>` : ""}${es.length && abd ? abd : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
+      h += `<button class="${cls}${abd && sc.cc ? " absent" : ""}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten${o ? ", lembur " + fmt(o) + " jam" : ""}${abd ? ", " + abd.replace(/<[^>]+>/g, "") : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}</span>` : abd}${o ? `<span class="ot">+${fmt(o)}j</span>` : sumPend(es) ? `<span class="ot pend" title="Lembur menunggu ACC">+${fmt(sumPend(es))}j?</span>` : ""}${es.length && abd ? abd : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
     }
   }
   $("cal").innerHTML = h;
@@ -317,7 +335,7 @@ function renderSummary() {
     const a = by("admin");
     const who = sc.cc ? [sc.cc] : membersInScope().map(c => c.id), ab = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 };
     who.forEach(id => { const o = absCount(id, from, to); STATUS.forEach(k => ab[k] += o[k]); });
-    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"), adm: sum(a, "qty"), qty: sum(es, "qty"), ot: sum(es, "lembur"), ab };
+    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"), adm: sum(a, "qty"), qty: sum(es, "qty"), ot: sumOt(es), ab };
   };
   const z = n => n ? n : `<span class="z">0</span>`;
   const abT = v => { const t = absShort(v.ab); return t ? `<span class="abtxt" title="${STATUS.map(k => k + " " + v.ab[k]).join(", ")}">${t}</span>` : `<span class="z">–</span>`; };
@@ -354,15 +372,16 @@ function qtyText(e, c) {
   return `<span class="qty">${e.qty}</span> ${UNIT[r]}`;
 }
 function entryBlock(e, c) {
-  return `<div class="ent"><span class="tg">${esc(e.brand)}</span>${qtyText(e, c)}${+e.lembur ? `<span class="oo">+${fmt(e.lembur)} j</span>` : ""}${(e.jenis || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}${(e.campaign || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}</div>
+  return `<div class="ent"><span class="tg">${esc(e.brand)}</span>${qtyText(e, c)}${lemburBadge(e)}${(e.jenis || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}${(e.campaign || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}</div>
     ${e.tugas ? `<div class="tt">${esc(e.tugas)}</div>` : ""}${linkOut(e.links)}${e.kendala ? `<div class="kdl"><b>Kendala:</b> ${esc(e.kendala)}${e.solusi ? ` · <b>Solusi:</b> ${esc(e.solusi)}` : ""}</div>` : ""}`;
 }
-function otSum(cc, a, b) { return Object.values(S.entries).filter(e => e.cc === cc && e.date >= a && e.date <= b).reduce((t, e) => t + (+e.lembur || 0), 0); }
+function otSum(cc, a, b) { return sumOt(Object.values(S.entries).filter(e => e.cc === cc && e.date >= a && e.date <= b)); }
+const lemburBadge = e => { const st = lstat(e); if (!st) return ""; return `<span class="oo ls-${st}" title="${LSTAT[st]}">+${fmt(e.lembur)} j${st === "acc" ? "" : " · " + LSTAT[st]}</span>`; };
 
 const AUTO = { flush: null };
 function renderDay() {
   const p = $("dayPanel"), s = S.sel; AUTO.flush = null;
-  if (!S.ccs.length) { p.innerHTML = `<div class="dayname">Mulai di sini</div><div class="empty">${S.isAdmin ? "Belum ada anggota. Buka <b>Pengaturan atasan</b> di bawah, lalu isi nama, jabatan, brand dan Gmail." : "Daftar anggota belum diisi atasan."}</div>`; return; }
+  if (!workers().length) { p.innerHTML = `<div class="dayname">Mulai di sini</div><div class="empty">${S.isAdmin ? "Belum ada anggota. Buka <b>Pengaturan atasan</b> di bawah, lalu isi nama, jabatan, brand dan Gmail." : "Daftar anggota belum diisi atasan."}</div>`; return; }
 
   if (!S.view) {
     const list = membersInScope(), filled = [], notyet = [];
@@ -370,7 +389,7 @@ function renderDay() {
     list.forEach(c => { const es = ents(s, s, { cc: c.id, brand: S.brandF }).sort((a, b) => CODES.indexOf(a.brand) - CODES.indexOf(b.brand)); const a = absOf(c.id, s); if (es.length) filled.push([c, es]); else if (a) absent.push([c, a]); else notyet.push([c, es]); });
     const all = ents(s, s);
     p.innerHTML = `<div class="dhead"><span class="dayname">${longDate(s)}</span></div>
-      <div class="sub" style="font-size:12.5px">${sum(all, "qty")} konten · lembur ${fmt(sum(all, "lembur"))} jam · ${filled.length} dari ${list.length} orang sudah mengisi</div>
+      <div class="sub" style="font-size:12.5px">${sum(all, "qty")} konten · lembur ${fmt(sumOt(all))} jam · ${filled.length} dari ${list.length} orang sudah mengisi</div>
       ${filled.length ? `<ul class="dlist">${filled.map(([c, es]) => `<li class="ditem">${ava(c, "sm")}<span class="nm">${esc(c.name)} <span class="tt" style="font-weight:500">· ${esc(c.jabatan || "")}</span></span><div class="body">${es.map(e => entryBlock(e, c)).join("")}</div></li>`).join("")}</ul>` : `<div class="empty">Belum ada yang mengisi report tanggal ini.</div>`}
       ${absent.length ? `<div class="notyet"><b>Tidak hadir:</b> ${absent.map(([c, a]) => `${esc(c.name)} <span class="abdg st-${a.status}">${a.status}</span>${a.note ? ` <span class="tt">${esc(a.note)}</span>` : ""}`).join(", ")}</div>` : ""}
       ${notyet.length ? `<div class="notyet"><b>Belum mengisi:</b> ${notyet.map(([c]) => esc(c.name)).join(", ")}</div>` : ""}`;
@@ -449,10 +468,14 @@ function renderDay() {
       <div class="two"><div class="field"><label class="lbl" for="kIn">Kendala</label><textarea id="kIn" class="short" placeholder="Kosongkan kalau tidak ada">${esc(e.kendala || "")}</textarea></div>
         <div class="field"><label class="lbl" for="sIn">Solusi</label><textarea id="sIn" class="short" placeholder="Langkah yang diambil">${esc(e.solusi || "")}</textarea></div></div>
       <div class="field"><label class="lbl" for="oIn">Lembur (jam)</label><input type="number" id="oIn" min="0" step="0.5" inputmode="decimal" value="${+e.lembur || ""}" placeholder="0">
-        <div class="otsum"><span>Lembur minggu ini: <b>${fmt(otSum(c.id, wk, add(wk, 6)))} jam</b></span><span>Bulan ini: <b>${fmt(otSum(c.id, s.slice(0, 7) + "-01", s.slice(0, 7) + "-31"))} jam</b></span><span>(semua brand)</span></div></div>
+        ${lstat(e) ? `<div class="lstat ls-${lstat(e)}" id="lStat"><b>${LSTAT[lstat(e)]}</b>${lstat(e) === "pending" ? " · lembur belum dihitung sampai disetujui atasan" : lstat(e) === "tolak" ? " · tidak dihitung" : (e.lemburBy ? " oleh " + esc(e.lemburBy) : "")}
+          ${S.isAdmin && lstat(e) !== "acc" ? `<button type="button" class="mini ok" data-lacc="acc">ACC</button>` : ""}${S.isAdmin && lstat(e) !== "tolak" ? `<button type="button" class="mini no" data-lacc="tolak">Tolak</button>` : ""}</div>`
+          : `<span class="hint">${S.isAdmin ? "Lembur yang diisi atasan langsung disetujui." : "Lembur akan dihitung setelah disetujui atasan."}</span>`}
+        <div class="otsum"><span>Lembur minggu ini: <b>${fmt(otSum(c.id, wk, add(wk, 6)))} jam</b></span><span>Bulan ini: <b>${fmt(otSum(c.id, s.slice(0, 7) + "-01", s.slice(0, 7) + "-31"))} jam</b></span><span>(semua brand, yang sudah disetujui)</span>${(() => { const pnd = sumPend(Object.values(S.entries).filter(x => x.cc === c.id && x.date.slice(0, 7) === s.slice(0, 7))); return pnd ? `<span class="pend">+${fmt(pnd)} j menunggu ACC</span>` : ""; })()}</div></div>
       ${e.updatedAt && brandsOf(c).length > 1 ? `<details class="move"><summary>Salah pilih brand? Pindahkan report ini</summary>
         <div class="moverow"><span class="sub">Pindahkan report ${b} tanggal ini ke</span><select id="mvTo" aria-label="Brand tujuan">${brandsOf(c).filter(x => x !== b).map(x => `<option value="${x}">${x} · ${esc(BNAME[x])}</option>`).join("")}</select><button type="button" class="ghostbtn" id="mvBtn">Pindahkan</button></div></details>` : ""}
-      <div class="saverow"><span class="saved" id="saveState">${e.updatedAt ? "Tersimpan " + new Date(e.updatedAt).toTimeString().slice(0, 5) : "Tersimpan otomatis saat diisi"}</span><button class="pbtn" type="submit">Simpan report</button></div>
+      <div class="saverow"><span class="saved" id="saveState">${e.updatedAt ? "Tersimpan " + new Date(e.updatedAt).toTimeString().slice(0, 5) : "Tersimpan otomatis saat diisi"}</span>
+        <span class="grow"></span>${e.updatedAt ? `<button type="button" class="delbtn" id="delBtn">Hapus report</button>` : ""}<button class="pbtn" type="submit">Simpan report</button></div>
     </form>`;
 
   const f = $("dayForm"), cc = c.id;
@@ -475,6 +498,12 @@ function renderDay() {
     if (ev.target.id === "addLink") { $("links").insertAdjacentHTML("beforeend", linkRow("")); $("links").lastElementChild.querySelector("input").focus(); return; }
     const r = ev.target.closest("[data-rmlink]"); if (r) { const rows = $("links").children; if (rows.length > 1) r.parentElement.remove(); else rows[0].querySelector("input").value = ""; schedule(); }
     if (ev.target.id === "mvBtn") { if (AUTO.flush) AUTO.flush(); moveEntry(cc, s, b, $("mvTo").value); }
+    const la = ev.target.closest("[data-lacc]"); if (la) { if (AUTO.flush) AUTO.flush(); approveLembur([ekey(cc, s, b)], la.dataset.lacc); return; }
+    if (ev.target.id === "delBtn") {
+      const btn = ev.target;
+      if (!btn.classList.contains("confirm")) { btn.classList.add("confirm"); btn.textContent = "Yakin hapus? Klik lagi"; setTimeout(() => { if (document.body.contains(btn)) { btn.classList.remove("confirm"); btn.textContent = "Hapus report"; } }, 4000); return; }
+      clearTimeout(timer); AUTO.flush = null; deleteEntry(cc, s, b);
+    }
   });
   f.querySelectorAll("#mvTo").forEach(x => x.addEventListener("input", ev => ev.stopPropagation()));
   f.addEventListener("submit", ev => {
@@ -487,21 +516,42 @@ function renderDay() {
 
 /* ---------------- render: pengaturan atasan ---------------- */
 const bchips = (val, attrs = "") => CODES.map(b => `<button type="button" aria-pressed="${brandList(val).includes(b)}" data-bc="${b}" ${attrs} title="${BNAME[b]}">${b}</button>`).join("");
+function jabOptions(v) {
+  const custom = v && !JABATAN.includes(v);
+  return JABATAN.map(j => `<option${j === (v || "Content Creator") ? " selected" : ""}>${esc(j)}</option>`).join("") +
+    `<option value="__other"${custom ? " selected" : ""}>${custom ? esc(v) : "Lainnya (isi sendiri)…"}</option>`;
+}
 function renderSettings() {
   $("setBox").hidden = !S.isAdmin; if (!S.isAdmin) return;
-  const jab = v => (JABATAN.includes(v) || !v ? JABATAN : JABATAN.concat([v])).map(j => `<option${j === (v || "Content Creator") ? " selected" : ""}>${esc(j)}</option>`).join("");
-  $("ccList").innerHTML = S.ccs.length ? `<div class="ccrow cchead"><span>Nama</span><span>Jabatan</span><span>Brand yang dipegang</span><span>Gmail</span><span></span></div>` + S.ccs.map(c => `<div class="ccrow" data-id="${esc(c.id)}">
+  let lastRole = "";
+  $("ccList").innerHTML = S.ccs.length ? `<div class="ccrow cchead"><span>Nama</span><span>Jabatan</span><span>Brand yang dipegang</span><span>Gmail</span><span></span></div>` + S.ccs.map(c => {
+    const r = roleOf(c), grp = r !== lastRole ? `<div class="ccgroup">${ROLE_LABEL[r]}${r === "sup" ? " · hanya memantau, setara atasan, tidak mengisi report" : ""}</div>` : "";
+    lastRole = r;
+    return grp + `<div class="ccrow" data-id="${esc(c.id)}">
       <input type="text" value="${esc(c.name)}" data-f="name" data-cid="${esc(c.id)}" aria-label="Nama">
-      <select data-f="jabatan" data-cid="${esc(c.id)}" aria-label="Jabatan ${esc(c.name)}">${jab(c.jabatan)}</select>
-      <div class="bchips" data-cid="${esc(c.id)}">${bchips(c.brand)}${roleOf(c) === "dg" ? `<span class="dgnote">brand utama · DG bisa isi semua brand</span>` : ""}</div>
+      <div class="jabcell"><select data-f="jabatan" data-cid="${esc(c.id)}" aria-label="Jabatan ${esc(c.name)}">${jabOptions(c.jabatan)}</select>
+        <input type="text" data-f="jabatanOther" data-cid="${esc(c.id)}" placeholder="Tulis jabatan" aria-label="Jabatan lainnya" value="${JABATAN.includes(c.jabatan) ? "" : esc(c.jabatan || "")}" hidden></div>
+      ${r === "sup" ? `<div class="bchips"><span class="dgnote">Pengawas · tidak memegang brand</span></div>` : `<div class="bchips" data-cid="${esc(c.id)}">${bchips(c.brand)}${r === "dg" ? `<span class="dgnote">brand utama · DG bisa isi semua brand</span>` : ""}</div>`}
       <input type="text" value="${esc(c.email || "")}" data-f="email" data-cid="${esc(c.id)}" placeholder="nama@gmail.com" aria-label="Gmail ${esc(c.name)}" inputmode="email">
-      <button class="x${S.armed === c.id ? " confirm" : ""}" data-rm="${esc(c.id)}">${S.armed === c.id ? "Hapus?" : "Hapus"}</button></div>`).join("") : `<div class="hint">Belum ada anggota.</div>`;
+      <button class="x${S.armed === c.id ? " confirm" : ""}" data-rm="${esc(c.id)}">${S.armed === c.id ? "Hapus?" : "Hapus"}</button></div>`;
+  }).join("") : `<div class="hint">Belum ada anggota.</div>`;
   const nb = $("ccBrand"); nb.innerHTML = bchips(nb.dataset.val);
+}
+
+/** panel atasan/pengawas: lembur yang menunggu persetujuan */
+function renderOtPanel() {
+  const box = $("otPanel"), list = (S.lemburPending || []).filter(e => ccById(e.cc) && lstat(e) === "pending").sort((a, b) => b.date.localeCompare(a.date));
+  box.hidden = !!S.view || !S.isAdmin || !list.length; if (box.hidden) return;
+  const ae = document.activeElement; if (box.contains(ae) && ae.tagName === "BUTTON" && ae.dataset.okall) return;
+  $("otList").innerHTML = list.map(e => { const c = ccById(e.cc), k = ekey(e.cc, e.date, e.brand); return `<li class="otitem">${ava(c, "sm")}
+      <div class="otbody"><b>${esc(c.name)}</b> <span class="tt">${esc(c.jabatan || "")}</span><div class="ent"><span class="tg">${esc(e.brand)}</span><span>${longDate(e.date)}</span><span class="oo ls-pending">+${fmt(e.lembur)} jam</span></div>${e.tugas ? `<div class="tt">${esc(e.tugas.slice(0, 160))}${e.tugas.length > 160 ? "…" : ""}</div>` : ""}</div>
+      <div class="otbtn"><button class="mini ok" data-lk="${esc(k)}" data-ld="acc">ACC</button><button class="mini no" data-lk="${esc(k)}" data-ld="tolak">Tolak</button></div></li>`; }).join("");
+  $("otCount").textContent = `${list.length} lembur · ${fmt(list.reduce((a, e) => a + (+e.lembur || 0), 0))} jam belum dihitung`;
 }
 
 let lastDay = "";
 function renderAll() {
-  renderHero(); renderNav(); renderPeople(); renderPersonTop(); renderCal(); renderSummary();
+  renderHero(); renderNav(); renderOtPanel(); renderPeople(); renderPersonTop(); renderCal(); renderSummary();
   const key = [S.view, S.sel, curBrand(), S.ccs.length, S.isAdmin].join("|"), dp = $("dayPanel");
   if (!(dp.contains(document.activeElement) && key === lastDay && document.activeElement.tagName !== "BUTTON")) renderDay();
   lastDay = key;
@@ -523,12 +573,38 @@ const errMsg = (e, own) => e && e.error === "forbidden" ? own : e && e.error ===
 
 const qE = {}, qT = {}; let qC = Promise.resolve();
 function saveEntry(cc, s, b, d, silent) {
-  const id = ekey(cc, s, b), body = { key: id, cc, date: s, brand: b, ...d, by: S.email, updatedAt: new Date().toISOString() };
+  const id = ekey(cc, s, b), old = S.entries[id] || {};
+  const body = { key: id, cc, date: s, brand: b, ...d, by: S.email, updatedAt: new Date().toISOString() };
+  // lembur: diisi sendiri → menunggu ACC, diisi atasan → disetujui, tidak berubah → status lama
+  body.lemburStatus = !(+d.lembur > 0) ? "" : S.isAdmin ? "acc" : (+old.lembur === +d.lembur && lstat(old)) ? lstat(old) : "pending";
+  if (body.lemburStatus === "acc" && S.isAdmin) body.lemburBy = S.email; else if (+old.lembur === +d.lembur) body.lemburBy = old.lemburBy || "";
   S.entries[id] = body; S.pending[id] = body; if (!silent) lastDay = ""; renderAll();
   const st = (txt, err) => { const x = $("saveState"); if (x) { x.textContent = txt; x.classList.toggle("err", !!err); } };
   qE[id] = (qE[id] || Promise.resolve()).then(() => api("saveEntry", { entry: body }))
-    .then(() => { if (S.pending[id] === body) delete S.pending[id]; st((silent ? "Tersimpan otomatis " : "Tersimpan ") + new Date().toTimeString().slice(0, 5)); if (!silent) toast(`Report ${b} ${shortD(s)} tersimpan`); })
+    .then(r => { if (r && r.lemburStatus !== undefined) body.lemburStatus = r.lemburStatus; if (S.pending[id] === body) delete S.pending[id]; st((silent ? "Tersimpan otomatis " : "Tersimpan ") + new Date().toTimeString().slice(0, 5)); if (!silent) toast(`Report ${b} ${shortD(s)} tersimpan${body.lemburStatus === "pending" ? " · lembur menunggu ACC atasan" : ""}`); })
     .catch(e => { st("Belum tersimpan", true); toast(errMsg(e, "Kamu hanya bisa mengisi report milikmu sendiri untuk brand yang kamu pegang")); });
+}
+async function deleteEntry(cc, s, b) {
+  const k = ekey(cc, s, b);
+  try {
+    await (qE[k] || Promise.resolve());
+    await api("deleteEntry", { cc, date: s, brand: b });
+    delete S.entries[k]; delete S.pending[k]; S.lemburPending = (S.lemburPending || []).filter(e => ekey(e.cc, e.date, e.brand) !== k);
+    lastDay = ""; renderAll(); toast(`Report ${b} ${shortD(s)} dihapus`);
+  } catch (e) { toast(errMsg(e, "Kamu hanya bisa menghapus report milikmu sendiri")); }
+}
+async function approveLembur(keys, decision) {
+  const prev = {};
+  keys.forEach(k => { const e = S.entries[k] || (S.lemburPending || []).find(x => ekey(x.cc, x.date, x.brand) === k); if (e) { prev[k] = { e, st: e.lemburStatus, by: e.lemburBy }; e.lemburStatus = decision; e.lemburBy = S.email; } });
+  S.lemburPending = (S.lemburPending || []).filter(e => !keys.includes(ekey(e.cc, e.date, e.brand)));
+  lastDay = ""; renderAll();
+  try {
+    const r = await api("approveLembur", { keys, decision });
+    toast(`${r.count} lembur ${decision === "acc" ? "disetujui" : "ditolak"}`);
+  } catch (e) {
+    Object.values(prev).forEach(p => { p.e.lemburStatus = p.st; p.e.lemburBy = p.by; });
+    toast(errMsg(e, "Hanya atasan dan pengawas yang bisa ACC lembur")); refresh();
+  }
 }
 function saveTarget(cc, b, wk, val) {
   const id = cc + "_" + b + "_" + wk, n = Math.max(0, parseInt(val) || 0); if (n === tgt(cc, b, wk)) return;
@@ -578,14 +654,17 @@ async function refresh() {
   if (my !== S.seq) return;
   $("notice").hidden = true;
   S.email = r.email; S.isAdmin = !!r.isAdmin; S.me = r.me || ""; S.sheetUrl = r.sheetUrl || ""; $("sheetBtn").hidden = !S.sheetUrl;
-  if (!S.teamDirty) S.ccs = (r.ccs || []).map(c => ({ ...c }));
+  if (!S.teamDirty) S.ccs = (r.ccs || []).map(c => ({ ...c })).sort(teamSort);
   const ent = {}; (r.entries || []).forEach(e => { ent[ekey(e.cc, e.date, e.brand)] = e; }); Object.assign(ent, S.pending); S.entries = ent;
   const tg = {}; (r.targets || []).forEach(t => { tg[t.cc + "_" + t.brand + "_" + t.week] = t; }); Object.assign(tg, S.pendingT); S.targets = tg;
+  S.lemburPending = (r.lemburPending || []).filter(e => !S.pending[ekey(e.cc, e.date, e.brand)]);
+  S.coverVer = r.coverVer || "";
   const ab = {}; (r.absences || []).forEach(a => { ab[a.cc + "_" + a.date] = a; }); Object.entries(S.pendingA).forEach(([k, v]) => { if (v) ab[k] = v; else delete ab[k]; }); S.absen = ab;
   const first = !S.ready; S.ready = true;
   if (first) {
     if (S.view && !ccById(S.view)) S.view = "";
-    if (!S.view && !S.isAdmin && S.me) S.view = S.me;
+    if (!S.view && S.me && roleOf(ccById(S.me)) !== "sup" && !S.isAdmin) S.view = S.me;
+    if (S.view && roleOf(ccById(S.view)) === "sup") S.view = "";
     if (!S.ccs.length && S.isAdmin) $("setBox").open = true;
   }
   $("userEmail").textContent = S.email; $("nav").hidden = false;
@@ -661,6 +740,11 @@ document.addEventListener("click", e => {
   const ph = e.target.closest("[data-photo]"); if (ph) { const inp = $("photoIn"); inp.dataset.cc = ph.dataset.photo; inp.value = ""; inp.click(); return; }
   const bt = e.target.closest("[data-btab]"); if (bt) { flushAuto(); S.brandSel[S.view] = bt.dataset.btab; lastDay = ""; renderAll(); return; }
 });
+$("otPanel").addEventListener("click", e => {
+  const b = e.target.closest("[data-lk]"); if (b) { approveLembur([b.dataset.lk], b.dataset.ld); return; }
+  if (e.target.closest("[data-okall]")) { const keys = (S.lemburPending || []).map(x => ekey(x.cc, x.date, x.brand)); if (keys.length) approveLembur(keys, "acc"); }
+});
+$("ccJab").addEventListener("change", e => { $("ccJabOther").hidden = e.target.value !== "__other"; if (e.target.value === "__other") $("ccJabOther").focus(); });
 $("photoIn").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; if (f) openCropper(e.target.dataset.cc, f); });
 cropInit();
 $("ccSel").addEventListener("change", e => openView(e.target.value));
@@ -684,8 +768,10 @@ $("ccForm").addEventListener("submit", e => {
   e.preventDefault(); const n = $("ccName").value.trim(); if (!n) { $("ccName").focus(); return; }
   const em = low($("ccEmail").value); if (em && S.ccs.some(c => low(c.email) === em)) { toast("Gmail itu sudah dipakai anggota lain"); return; }
   let id = n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "cc"; while (ccById(id)) id += "-2";
-  S.ccs.push({ id, name: n, jabatan: $("ccJab").value, brand: $("ccBrand").dataset.val || "", email: em, photoVer: "" });
-  $("ccName").value = ""; $("ccEmail").value = ""; $("ccBrand").dataset.val = ""; saveCfg();
+  const jab = $("ccJab").value === "__other" ? ($("ccJabOther").value.trim() || "Lainnya") : $("ccJab").value;
+  S.ccs.push({ id, name: n, jabatan: jab, brand: $("ccBrand").dataset.val || "", email: em, photoVer: "" }); S.ccs.sort(teamSort);
+  $("ccName").value = ""; $("ccEmail").value = ""; $("ccJabOther").value = ""; $("ccJabOther").hidden = true; $("ccJab").value = "Content Creator"; $("ccBrand").dataset.val = ""; saveCfg();
+  toast(`${n} ditambahkan (${ROLE_LABEL[roleOf({ jabatan: jab })]})`);
 });
 $("ccList").addEventListener("change", e => {
   const t = e.target.closest("[data-f]"); if (!t) return; const c = ccById(t.dataset.cid); if (!c) return;
@@ -693,7 +779,8 @@ $("ccList").addEventListener("change", e => {
   if (f === "email" && v && S.ccs.some(x => x !== c && low(x.email) === v)) { toast("Gmail itu sudah dipakai anggota lain"); t.value = c.email || ""; return; }
   if (f === "name" && !v) { t.value = c.name; return; }
   if (c[f] === v) return;
-  c[f] = v; t.blur(); saveCfg();
+  if (f === "jabatan" && v === "__other") { const box = t.parentElement.querySelector("[data-f='jabatanOther']"); if (box) { box.hidden = false; box.focus(); } return; }
+  c[f === "jabatanOther" ? "jabatan" : f] = f === "jabatanOther" ? (v || "Lainnya") : v; t.blur(); S.ccs.sort(teamSort); saveCfg();
 });
 $("ccList").addEventListener("click", e => {
   const bc = e.target.closest("[data-bc]");
@@ -736,13 +823,13 @@ async function exportXlsx() {
     rk.getCell("A2").value = "* Target bulan = jumlah target mingguan (Senin–Minggu) yang diisi atasan, sudah dikurangi hari cuti/izin/sakit"; rk.getCell("A2").font = { italic: true, size: 9, color: { argb: "FF6A6C78" } };
     rk.getRow(3).values = rkCols.map(c => c[0]); head(rk.getRow(3));
     let r = 4;
-    S.ccs.forEach((c, ci) => {
+    workers().forEach((c, ci) => {
       const role = roleOf(c);
       brandsOf(c).forEach(b => {
         const es = inMonth.filter(e => e.cc === c.id && e.brand === b), tb = mons.reduce((a, w) => a + tgtEff(c.id, b, w), 0), tot = sum(es, "qty");
         if (!es.length && !tb) return;
         const row = rk.getRow(r++);
-        row.values = [c.name, c.jabatan || "", b, UNIT[role], tb, tot, tb ? tot / tb : "", role === "admin" ? sum(es, "fb") : "", role === "admin" ? sum(es, "yt") : "", role === "admin" ? sum(es, "shopee") : "", new Set(es.map(e => e.date)).size, sum(es, "lembur"), es.filter(e => e.kendala).length];
+        row.values = [c.name, c.jabatan || "", b, UNIT[role], tb, tot, tb ? tot / tb : "", role === "admin" ? sum(es, "fb") : "", role === "admin" ? sum(es, "yt") : "", role === "admin" ? sum(es, "shopee") : "", new Set(es.map(e => e.date)).size, sumOt(es), es.filter(e => e.kendala).length];
         row.getCell(7).numFmt = "0%"; paint(row, ci % 2 ? GREY : "FFFFFFFF");
       });
     });
@@ -757,13 +844,13 @@ async function exportXlsx() {
     const smCols = [["Minggu", 12], ["Periode", 22], ["Video (CC)", 12], ["Desain (DG)", 12], ["Facebook", 11], ["YouTube", 11], ["Shopee", 11], ["Total upload (Admin)", 14], ["Lembur (jam)", 12]];
     sm.columns = smCols.map(c => ({ width: c[1] })); title(sm, "RINGKASAN PER MINGGU · " + periode.toUpperCase(), smCols.length);
     sm.getRow(3).values = smCols.map(c => c[0]); head(sm.getRow(3));
-    const agg = es => { const by = q => es.filter(e => roleOf(ccById(e.cc)) === q); const a = by("admin"); return [sum(by("cc"), "qty"), sum(by("dg"), "qty"), sum(a, "fb"), sum(a, "yt"), sum(a, "shopee"), sum(a, "qty"), sum(es, "lembur")]; };
+    const agg = es => { const by = q => es.filter(e => roleOf(ccById(e.cc)) === q); const a = by("admin"); return [sum(by("cc"), "qty"), sum(by("dg"), "qty"), sum(a, "fb"), sum(a, "yt"), sum(a, "shopee"), sum(a, "qty"), sumOt(es)]; };
     mons.forEach((w, i) => { const row = sm.getRow(4 + i); row.values = ["Minggu " + (i + 1), shortD(w) + " – " + shortD(add(w, 6)), ...agg(all.filter(e => e.date >= w && e.date <= add(w, 6)))]; paint(row, i % 2 ? GREY : "FFFFFFFF"); });
     const smT = sm.getRow(4 + mons.length); smT.values = ["Total " + BULAN[m - 1], "tanggal 1–" + pd(last).getDate(), ...agg(inMonth)]; paint(smT, BLUE, { bold: true, color: { argb: "FFFFFFFF" } });
 
     // 3. Sheet per orang
     const used = new Set(["Rekap", "Ringkasan Mingguan", "Raw Data", "Kehadiran"]);
-    S.ccs.forEach(c => {
+    workers().forEach(c => {
       let nm = (c.name || "CC").replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 31).trim() || "CC"; let k = 2; while (used.has(nm)) nm = nm.slice(0, 28) + " " + (k++); used.add(nm);
       const role = roleOf(c), u = UNIT[role], bs = brandsOf(c);
       const cols = [["No", 5], ["Hari", 9], ["Tanggal", 12], ["Brand", 8]];
@@ -797,13 +884,13 @@ async function exportXlsx() {
           if (role === "admin") vals.push(e ? e.fb : "", e ? e.yt : "", e ? e.shopee : "", e ? e.qty : "");
           else if (role === "dg") vals.push(e ? e.qty : "", e ? (e.jenis || []).join(" + ") : "", e ? (e.campaign || []).join(", ") : "");
           else vals.push(e ? e.qty : "");
-          vals.push(dT || "", st, e ? e.tugas || "" : (ab ? ab.note || "" : ""), "", e ? e.kendala || "" : "", e ? e.solusi || "" : "", e ? +e.lembur || 0 : "", e ? fmtTs(e.updatedAt) : "");
+          vals.push(dT || "", st, e ? e.tugas || "" : (ab ? ab.note || "" : ""), "", e ? e.kendala || "" : "", e ? e.solusi || "" : "", e ? otA(e) : 0, e ? fmtTs(e.updatedAt) : "");
           const rr = ws.getRow(row++); rr.values = vals; rr.getCell(3).numFmt = "dd/mm/yyyy";
           rr.eachCell({ includeEmpty: true }, x => { x.border = box; x.alignment = { vertical: "top", wrapText: true }; });
           rr.getCell(iSt).font = { bold: true, color: { argb: st === "Capai target" ? "FF3D7B52" : st === "Di bawah target" ? "FF9C6A12" : st === "Alpha" ? "FFB23B32" : "FF8A8FA3" } };
           if (sun && !e && !ab) paint(rr, GREY);
           if (!e && ab) paint(rr, ab.status === "Alpha" ? "FFF6DEDC" : "FFFBEFD6");
-          if (e) { setLink(rr.getCell(iLink), e.links || []); if (e.kendala) rr.getCell(iKend).fill = fillC("FFFBEFD6"); wT += e.qty; wO += +e.lembur || 0; mT += e.qty; mO += +e.lembur || 0; }
+          if (e) { setLink(rr.getCell(iLink), e.links || []); if (e.kendala) rr.getCell(iKend).fill = fillC("FFFBEFD6"); wT += e.qty; wO += otA(e); mT += e.qty; mO += otA(e); }
         });
         if (sun || s === last) subtotal(s);
       });
@@ -818,7 +905,7 @@ async function exportXlsx() {
     const khCols = [["Nama", 22], ["Jabatan", 17], ["Cuti", 8], ["Izin", 8], ["Sakit", 8], ["Alpha", 8], ["Total", 8], ["Rincian tanggal", 70]];
     kh.columns = khCols.map(c => ({ width: c[1] })); title(kh, "KEHADIRAN · " + periode.toUpperCase(), khCols.length);
     kh.getRow(3).values = khCols.map(c => c[0]); head(kh.getRow(3));
-    S.ccs.forEach((c, i) => {
+    workers().forEach((c, i) => {
       const o = absCount(c.id, first, last), list = Object.values(S.absen).filter(a => a.cc === c.id && a.date >= first && a.date <= last).sort((a, b) => a.date.localeCompare(b.date));
       const row = kh.getRow(4 + i);
       row.values = [c.name, c.jabatan || "", o.Cuti, o.Izin, o.Sakit, o.Alpha, list.length, list.map(a => shortD(a.date) + " " + a.status + (a.note ? " (" + a.note + ")" : "")).join("; ")];
@@ -828,11 +915,11 @@ async function exportXlsx() {
 
     // 5. Raw data
     const raw = wb.addWorksheet("Raw Data", { views: [{ state: "frozen", ySplit: 1 }] });
-    const rc = [["Tanggal", 12], ["Hari", 9], ["Nama", 20], ["Jabatan", 16], ["Brand", 8], ["Jumlah", 9], ["Satuan", 9], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Target minggu", 11], ["Jenis", 14], ["Desain campaign", 26], ["Tugas harian", 46], ["Link", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Diisi pada", 16]];
+    const rc = [["Tanggal", 12], ["Hari", 9], ["Nama", 20], ["Jabatan", 16], ["Brand", 8], ["Jumlah", 9], ["Satuan", 9], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Target minggu", 11], ["Jenis", 14], ["Desain campaign", 26], ["Tugas harian", 46], ["Link", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Status lembur", 13], ["Diisi pada", 16]];
     raw.columns = rc.map(x => ({ width: x[1] })); raw.getRow(1).values = rc.map(x => x[0]); head(raw.getRow(1));
-    inMonth.slice().sort((a, b) => ccById(a.cc).name.localeCompare(ccById(b.cc).name) || a.date.localeCompare(b.date) || bsort(a, b)).forEach((e, i) => {
+    inMonth.filter(e => roleOf(ccById(e.cc)) !== "sup").sort((a, b) => teamSort(ccById(a.cc), ccById(b.cc)) || a.date.localeCompare(b.date) || bsort(a, b)).forEach((e, i) => {
       const c = ccById(e.cc), role = roleOf(c), rr = raw.getRow(2 + i);
-      rr.values = [xd(e.date), HARI[pd(e.date).getDay()], c.name, c.jabatan || "", e.brand, e.qty, UNIT[role], role === "admin" ? e.fb : "", role === "admin" ? e.yt : "", role === "admin" ? e.shopee : "", tgt(c.id, e.brand, monday(e.date)) || "", (e.jenis || []).join(" + "), (e.campaign || []).join(", "), e.tugas || "", "", e.kendala || "", e.solusi || "", +e.lembur || 0, fmtTs(e.updatedAt)];
+      rr.values = [xd(e.date), HARI[pd(e.date).getDay()], c.name, c.jabatan || "", e.brand, e.qty, UNIT[role], role === "admin" ? e.fb : "", role === "admin" ? e.yt : "", role === "admin" ? e.shopee : "", tgt(c.id, e.brand, monday(e.date)) || "", (e.jenis || []).join(" + "), (e.campaign || []).join(", "), e.tugas || "", "", e.kendala || "", e.solusi || "", +e.lembur || 0, LSTAT[lstat(e)] || "", fmtTs(e.updatedAt)];
       rr.getCell(1).numFmt = "dd/mm/yyyy"; setLink(rr.getCell(15), e.links || []);
       rr.eachCell({ includeEmpty: true }, x => { x.border = box; x.alignment = { vertical: "top", wrapText: true }; });
     });

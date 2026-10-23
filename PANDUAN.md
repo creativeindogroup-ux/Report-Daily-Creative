@@ -1,6 +1,36 @@
 # Panduan — Daily Report Creative (GitHub + Google Sheets)
 
-## Update ke versi 2.1 (± 3 menit)
+## Update ke versi 2.2 (± 3 menit)
+
+Isi versi 2.2:
+- **Hapus report:** tombol **Hapus report** di form harian. Klik dua kali untuk memastikan. Hanya pemilik report atau atasan/pengawas yang bisa menghapus.
+- **Urutan otomatis:** daftar tim, kartu rekap, tab Google Sheet, dan Excel diurutkan per jabatan (Content Creator → Desain Grafis → Admin → Pengawas), lalu abjad nama. Anggota baru langsung masuk ke posisinya.
+- **Foto:** foto di halaman tiap orang memakai rasio **1:1** sehingga tidak terpotong. Beranda punya **cover 16:9** yang bisa diganti dan diatur (geser/zoom) oleh atasan lewat tombol **Ganti cover**.
+- **Lembur perlu ACC:**
+  - Lembur yang diisi sendiri berstatus **Menunggu ACC** dan belum dihitung.
+  - Atasan/pengawas menyetujuinya lewat panel **Lembur menunggu ACC** di beranda, atau tombol ACC/Tolak di form.
+  - Lembur yang ditolak tetap tercatat, tetapi tidak dihitung.
+  - Lembur yang diisi atasan langsung disetujui.
+  - Lembur dari versi sebelumnya otomatis dianggap sudah disetujui.
+- **Jabatan pengawas:** HR, Content Director, Manajer Live dan Video, atau **Lainnya** (ditulis sendiri). Mereka login dengan Gmail dan punya hak seperti atasan, tetapi tidak muncul di rekap dan tidak perlu mengisi report.
+- **Google Sheet lebih rapi:**
+  - tab tiap orang menampilkan **semua tanggal Senin–Sabtu**;
+  - tanggal tanpa report ditulis **0** dengan keterangan "Belum diisi";
+  - kolom angka dikunci formatnya, sehingga tidak lagi berubah menjadi tanggal;
+  - ada kolom **Status lembur**.
+
+### Langkahnya
+1. **GitHub:** upload `index.html`, `style.css`, `app.js`, `Code.gs`, dan `PANDUAN.md` lewat **Add file → Upload files → Commit changes**. Kalau Claude sudah diberi akses ke repo, langkah ini otomatis.
+2. **Google Sheets** (wajib):
+   - Buka **Extensions → Apps Script**, lalu tekan **Ctrl + A → Delete**.
+   - Tempel isi `Code.gs` yang baru, lalu klik **Save**.
+   - Pilih **`setupAwal`**, lalu klik **▶ Run**.
+   - Klik **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**.
+3. **Atasan:** di **Pengaturan atasan**, tambahkan pengawas dengan jabatan HR, Content Director, Manajer Live dan Video, atau pilih **Lainnya** lalu tulis jabatannya. Isi juga Gmail mereka.
+
+---
+
+## Update ke versi 2.1 (sudah dilakukan)
 
 Isi versi 2.1:
 - **Perbaikan bug:** pilihan brand di *Pengaturan atasan* sekarang bisa diedit. Nama brand yang ditulis manual di sheet "Anggota" (misalnya "Menteri" atau "Batik Oliver") sekarang dikenali.
@@ -72,7 +102,7 @@ Setelah `setupAwal` dijalankan, data lama otomatis dipindahkan:
 | **Target** | Target per orang, per brand, per minggu (Senin). |
 | **Kehadiran** | Cuti / Izin / Sakit / Alpha per orang per tanggal, beserta keterangan. |
 | **Semua Report** | Semua isian dikelompokkan per nama, urut tanggal, link bisa diklik. Dirapikan otomatis tiap 5 menit. |
-| **(nama orang)** | Satu tab per orang: urut tanggal, dikelompokkan per bulan, link bisa diklik. Diperbarui setiap kali orang itu menyimpan report. |
+| **(nama orang)** | Satu tab per orang (tanpa pengawas): semua tanggal Senin–Sabtu, tanggal kosong = 0, dikelompokkan per bulan, link bisa diklik, ada status lembur. Diperbarui setiap kali orang itu menyimpan report. |
 | _data, _foto | Database dashboard (tersembunyi). **Jangan diubah manual.** |
 
 Menu **Daily Report** di toolbar Google Sheet berisi:

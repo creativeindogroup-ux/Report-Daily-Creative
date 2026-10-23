@@ -50,6 +50,10 @@
   <main id="app" hidden>
     <!-- BERANDA -->
     <div id="homeView">
+      <section class="card otpanel" id="otPanel" hidden aria-labelledby="hOt">
+        <div class="dhead"><h2 id="hOt" class="ottitle">Lembur menunggu ACC</h2><span class="sub" id="otCount"></span><span class="grow"></span><button type="button" class="mini ok" data-okall="1">ACC semua</button></div>
+        <ul class="dlist" id="otList"></ul>
+      </section>
       <section class="sec">
         <h2 class="stitle"><b>Rekap report</b> per nama</h2>
         <p class="ssub" id="rekapSub"></p>
@@ -95,11 +99,12 @@
 
     <details class="card setbox" id="setBox" hidden>
       <summary>Pengaturan atasan: anggota tim</summary>
-      <p class="hint">Atur nama, jabatan, brand yang dipegang dan Gmail setiap anggota. Foto diganti lewat halaman masing-masing orang. Perubahan juga bisa dilakukan langsung di sheet “Anggota”.</p>
+      <p class="hint">Daftar otomatis urut jabatan (Content Creator → Desain Grafis → Admin → Pengawas) lalu abjad nama. Pengawas (HR, Content Director, Manajer, atau jabatan lain) bisa login dan punya hak seperti atasan, tetapi tidak perlu mengisi report. Atur nama, jabatan, brand yang dipegang dan Gmail setiap anggota. Foto diganti lewat halaman masing-masing orang. Perubahan juga bisa dilakukan langsung di sheet “Anggota”.</p>
       <div class="cclist" id="ccList"></div>
       <form class="ccrow newrow" id="ccForm" autocomplete="off">
         <input type="text" id="ccName" placeholder="Nama" aria-label="Nama baru">
-        <select id="ccJab" aria-label="Jabatan"><option>Content Creator</option><option>Desain Grafis</option><option>Admin</option></select>
+        <div class="jabcell"><select id="ccJab" aria-label="Jabatan"><option>Content Creator</option><option>Desain Grafis</option><option>Admin</option><option>HR</option><option>Content Director</option><option>Manajer Live dan Video</option><option value="__other">Lainnya (isi sendiri)…</option></select>
+          <input type="text" id="ccJabOther" placeholder="Tulis jabatan" aria-label="Jabatan lainnya" hidden></div>
         <div class="bchips" id="ccBrand" data-val=""></div>
         <input type="text" id="ccEmail" placeholder="nama@gmail.com" aria-label="Gmail" inputmode="email">
         <button class="pbtn" type="submit">Tambah</button>
