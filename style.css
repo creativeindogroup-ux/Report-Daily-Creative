@@ -29,7 +29,7 @@
 html{-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;font-family:var(--font);font-size:14.5px;line-height:1.5;color:var(--on-dark);
   /* latar: langit malam berbintang */
-  background:#06141b url("bg-bintang.jpg") no-repeat center/cover;background-attachment:fixed}
+  background:#010307 url("bg-bintang.jpg") no-repeat center/contain;background-attachment:fixed}
 [hidden]{display:none!important}
 img{max-width:100%;display:block}
 button,input,select,textarea{font:inherit;color:inherit}
