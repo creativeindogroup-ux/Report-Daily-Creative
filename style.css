@@ -27,14 +27,8 @@
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;font-family:var(--font);font-size:14.5px;line-height:1.5;color:var(--on-dark);
-  background-color:var(--g900);
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-    radial-gradient(1200px 700px at 12% -10%,rgba(107,144,113,.75),transparent 60%),
-    radial-gradient(900px 600px at 95% 15%,rgba(174,195,176,.35),transparent 60%),
-    radial-gradient(1000px 800px at 60% 110%,rgba(55,85,52,.9),transparent 60%),
-    linear-gradient(160deg,#375534 0%,#1f3d29 45%,#0f2a1d 100%);
-  background-attachment:fixed}
+  /* latar: motif batik putih (ubin berulang tanpa sambungan) */
+  background:#fbfbf9 url("bg-batik.png") repeat center top/327px 328px;background-attachment:fixed}
 [hidden]{display:none!important}
 img{max-width:100%;display:block}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -45,16 +39,18 @@ h1,h2,h3{margin:0;font-family:var(--font);text-wrap:balance}
 .hint{font-size:12.5px;color:var(--muted);margin:0}
 
 /* ---------- kaca ---------- */
-.page,.nav,.navcap,.stat,.gatebox,.modalbox,.otpanel,.setbox,.calcard,.band,.bcard.total{
+.page{-webkit-backdrop-filter:blur(2px) saturate(140%)!important;backdrop-filter:blur(2px) saturate(140%)!important}
+.nav,.navcap,.stat,.gatebox,.modalbox,.otpanel,.setbox,.calcard,.band,.bcard.total{
   -webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%)}
 
 .page{max-width:1220px;margin:18px auto;border-radius:var(--r-xl);display:grid;gap:22px;align-content:start;
   padding:18px max(16px,env(safe-area-inset-right,0px)) 30px max(16px,env(safe-area-inset-left,0px));
-  background:linear-gradient(150deg,rgba(174,195,176,.22),rgba(55,85,52,.14) 55%,rgba(15,42,29,.18));
-  border:1px solid var(--glass-line);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 30px 80px rgba(0,0,0,.35)}
+  /* kaca hijau di atas motif batik: motif tetap terlihat samar */
+  background:linear-gradient(150deg,rgba(55,85,52,.86),rgba(31,61,41,.88) 50%,rgba(15,42,29,.92));
+  border:1px solid rgba(255,255,255,.5);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 30px 80px rgba(15,42,29,.35)}
 @media (min-width:900px){.page{padding-left:26px;padding-right:26px}}
-@media (max-width:640px){.page{margin:0;border-radius:0;border:0}}
+@media (max-width:640px){.page{margin:0;border-radius:0;border:0;min-height:100vh}}
 
 /* ---------- TOP BAR ---------- */
 .nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px;border-radius:999px;
@@ -390,4 +386,6 @@ details.move summary{cursor:pointer;font-size:13px;color:var(--g700);font-weight
 .zoomrow input{flex:1;accent-color:var(--g700)}
 .cropact{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 @media (prefers-reduced-motion:no-preference){.cell,.pill,.chip,.tab,.pbtn,.bchip,.mini{transition:background .18s,border-color .18s,color .18s}}
-@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.page{background:rgba(31,61,41,.92)}.nav,.stat,.setbox{background:rgba(55,85,52,.85)}}
+@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.page{background:rgba(31,61,41,.96)}.nav,.stat,.setbox{background:rgba(55,85,52,.85)}}
+.bcard .bhead .bcode{color:var(--g100)}
+.bcard.total .bhead .bcode{color:var(--g900);font-size:14px}
