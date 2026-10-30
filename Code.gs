@@ -1,5 +1,5 @@
 /**
- * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2.2)
+ * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2.3)
  *
  * Cara pasang / update: lihat PANDUAN.md bagian "Update".
  * Ringkas: tempel seluruh isi file ini di Extensions → Apps Script, Save,
@@ -23,7 +23,7 @@ const SESSION_DAYS = 90;
 // ================================================
 
 const TZ = "Asia/Jakarta";
-const VERSION = "v2.2.1";
+const VERSION = "v2.3";
 const BRAND_CODES = ["OLV", "KNG", "77", "MTR", "IDN", "RS", "TKS"];
 const BRAND_NAMES = { OLV: "Batik Oliver", KNG: "Kenangan Fashion", "77": "Batik 77", MTR: "Batik Menteri", IDN: "Batik Indonesia", RS: "Batik Rama Shinta", TKS: "Batik Taksaka" };
 const JABATAN = ["Content Creator", "Desain Grafis", "Admin", "HR", "Content Director", "Manajer Live dan Video"];
@@ -33,6 +33,10 @@ const HARI = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const BULAN = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"];
 const C_BLUE = "#5a6fa7", C_SOFT = "#e6eaf5", C_BAND = "#f4f6fb", C_WARN = "#fbefd6", C_ALPHA = "#f6dedc";
 const STATUS = ["Cuti", "Izin", "Sakit", "Alpha"];
+// file data = link Google Docs / Spreadsheet / Slides
+const FILE_RE = /docs\.google\.com\/(document|spreadsheets|presentation)\//i;
+function countFiles_(links) { return String(links || "").split("\n").filter(l => FILE_RE.test(l)).length; }
+function filesOf_(r) { return r[20] === "" || r[20] === null || r[20] === undefined ? countFiles_(r[11]) : Number(r[20]) || 0; }
 // nama lain yang dikenali saat brand ditulis manual di sheet "Anggota"
 const BRAND_ALIAS = [["OLV", /oliver|^olv$/], ["KNG", /kenangan|^kng$/], ["77", /^(batik\s*)?77$/], ["MTR", /menteri|^mtr$/],
                      ["IDN", /indonesia|indo\s*group|^idn$/], ["RS", /rama\s*shinta|ramashinta|^rs$/], ["TKS", /taksaka|^tks$/]];
@@ -42,7 +46,7 @@ const SH = {
   target: { name: "Target", head: ["ID", "Nama", "Brand", "Minggu mulai (Senin)", "Target"], text: [1, 3, 4] },
   db:     { name: "_data", head: ["Kunci", "Tanggal", "ID", "Brand", "Jumlah", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
                                   "Tugas harian", "Link", "Kendala", "Solusi", "Lembur (jam)", "Diisi oleh", "Diperbarui",
-                                  "Status lembur", "ACC oleh", "Waktu ACC"], text: [1, 2, 3, 4, 16, 17, 18, 19, 20], hidden: true },
+                                  "Status lembur", "ACC oleh", "Waktu ACC", "File data", "File data manual"], text: [1, 2, 3, 4, 16, 17, 18, 19, 20], hidden: true },
   photo:  { name: "_foto", head: ["ID", "Thumbnail", "Besar 1", "Besar 2", "Besar 3", "Besar 4"], text: [1, 2, 3, 4, 5, 6], hidden: true },
   absen:  { name: "Kehadiran", head: ["ID", "Nama", "Tanggal", "Status", "Keterangan", "Diisi oleh", "Diperbarui"], text: [1, 3, 6, 7] }
 };
@@ -165,7 +169,8 @@ function entryFromRow_(r) {
     tugas: String(r[10] || ""), links: split(r[11], "\n"),
     kendala: String(r[12] || ""), solusi: String(r[13] || ""),
     lembur: Number(r[14]) || 0, by: String(r[15] || ""), updatedAt: iso_(r[16]),
-    lemburStatus: Number(r[14]) > 0 ? (String(r[17] || "") || "acc") : "", lemburBy: String(r[18] || ""), lemburAt: iso_(r[19])
+    lemburStatus: Number(r[14]) > 0 ? (String(r[17] || "") || "acc") : "", lemburBy: String(r[18] || ""), lemburAt: iso_(r[19]),
+    files: filesOf_(r), filesManual: String(r[21] || "") === "1" ? 1 : 0
   };
 }
 
@@ -215,8 +220,11 @@ function saveEntry_(ctx, e) {
     arr(e.links).filter(l => /^https?:\/\//i.test(l)).slice(0, 20).join("\n"),
     String(e.kendala || "").slice(0, 2000), String(e.solusi || "").slice(0, 2000),
     Math.max(0, Number(e.lembur) || 0), ctx.email,
-    Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss"), "", "", ""
+    Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd HH:mm:ss"), "", "", "", 0, ""
   ];
+  // file data: otomatis dari link, kecuali diubah manual
+  row[21] = +e.filesManual ? "1" : "";
+  row[20] = row[21] ? Math.max(0, Math.round(Number(e.files) || 0)) : countFiles_(row[11]);
   let lemburStatus = "";
   withLock_(() => {
     // lembur: diisi sendiri → menunggu ACC; diisi/diubah atasan → langsung disetujui
@@ -416,9 +424,9 @@ function rebuildPerson_(m, db, ab) {
   if (role === "admin") head = head.concat(["Facebook", "YouTube", "Shopee", "Total upload"]);
   else if (role === "dg") head = head.concat(["Jumlah desain", "Jenis", "Desain campaign"]);
   else head = head.concat(["Jumlah video"]);
-  head = head.concat(["Tugas harian / keterangan", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Status lembur", "Diperbarui"]);
-  const W = head.length, iLink = head.indexOf("Link hasil kerja"), iKend = head.indexOf("Kendala"), iOt = head.indexOf("Lembur (jam)");
-  const numCols = role === "admin" ? [4, 5, 6, 7] : [4];   // indeks 0-based kolom angka
+  head = head.concat(["File data", "Tugas harian / keterangan", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Status lembur", "Diperbarui"]);
+  const W = head.length, iLink = head.indexOf("Link hasil kerja"), iKend = head.indexOf("Kendala"), iOt = head.indexOf("Lembur (jam)"), iFd = head.indexOf("File data");
+  const numCols = (role === "admin" ? [4, 5, 6, 7] : [4]).concat([iFd]);   // indeks 0-based kolom angka
   const zeroRole = () => role === "admin" ? [0, 0, 0, 0] : role === "dg" ? [0, "", ""] : [0];
 
   // semua tanggal: dari awal bulan paling awal (atau bulan ini) sampai hari ini
@@ -431,7 +439,7 @@ function rebuildPerson_(m, db, ab) {
 
   const vals = [], bgs = [], fcs = [], fws = [], monthRows = [];
   const cnt = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 };
-  let lastMonth = "", band = false, tot = 0, ot = 0, otPend = 0;
+  let lastMonth = "", band = false, tot = 0, ot = 0, otPend = 0, fdTot = 0;
   for (; d <= last; d = addDay_(d, 1)) {
     const list = byDate[d] || [];
     const sunday = hari_(d) === "Minggu";
@@ -449,11 +457,11 @@ function rebuildPerson_(m, db, ab) {
     rows.forEach(it => {
       let line, bg, fc = "#23252f";
       if (!it) {
-        line = [dateCell_(d), hari_(d), d > today ? "" : "Belum diisi", "-"].concat(zeroRole()).concat(["", "", "", "", 0, "", ""]);
+        line = [dateCell_(d), hari_(d), d > today ? "" : "Belum diisi", "-"].concat(zeroRole()).concat([0, "", "", "", "", 0, "", ""]);
         bg = new Array(W).fill(band ? "#ffffff" : C_BAND); fc = "#8a8fa3";
       } else if (it.a) {
         const a = it.a, st = String(a[3] || "");
-        line = [dateCell_(d), hari_(d), st.toUpperCase(), "-"].concat(zeroRole()).concat([String(a[4] || ""), "", "", "", 0, "", String(a[6] || "")]);
+        line = [dateCell_(d), hari_(d), st.toUpperCase(), "-"].concat(zeroRole()).concat([0, String(a[4] || ""), "", "", "", 0, "", String(a[6] || "")]);
         bg = new Array(W).fill(st === "Alpha" ? C_ALPHA : C_WARN);
         if (cnt[st] !== undefined) cnt[st]++;
       } else {
@@ -462,8 +470,9 @@ function rebuildPerson_(m, db, ab) {
         if (role === "admin") line.push(Number(r[5]) || 0, Number(r[6]) || 0, Number(r[7]) || 0, Number(r[4]) || 0);
         else if (role === "dg") line.push(Number(r[4]) || 0, String(r[8] || ""), String(r[9] || ""));
         else line.push(Number(r[4]) || 0);
-        line.push(String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), Number(r[14]) || 0, LSTAT[ls] || "", String(r[16] || ""));
+        line.push(filesOf_(r), String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""), Number(r[14]) || 0, LSTAT[ls] || "", String(r[16] || ""));
         bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
+        fdTot += filesOf_(r);
         if (r[12]) bg[iKend] = C_WARN;
         if (ls === "pending") bg[iOt] = bg[iOt + 1] = C_WARN;
         if (ls === "tolak") bg[iOt] = bg[iOt + 1] = C_ALPHA;
@@ -478,7 +487,7 @@ function rebuildPerson_(m, db, ab) {
   sh.clear();
   sh.getRange(1, 1).setValue("DAILY REPORT — " + m.name.toUpperCase()).setFontSize(14).setFontWeight("bold").setFontColor(C_BLUE);
   sh.getRange(2, 1).setValue((m.jabatan || "-") + "   ·   Brand: " + (role === "dg" ? "semua brand" + (brandList_(m.brand).length ? " (utama " + brandList_(m.brand).join(", ") + ")" : "") : brandsOf_(m).join(", ")) + "   ·   " + (m.email || "-"));
-  sh.getRange(3, 1).setValue("Total: " + tot + " " + (role === "admin" ? "upload" : role === "dg" ? "desain" : "video") + "   ·   Lembur disetujui: " + ot + " jam" + (otPend ? " (+" + otPend + " jam menunggu ACC)" : "") +
+  sh.getRange(3, 1).setValue("Total: " + tot + " " + (role === "admin" ? "upload" : role === "dg" ? "desain" : "video") + "   ·   File data: " + fdTot + "   ·   Lembur disetujui: " + ot + " jam" + (otPend ? " (+" + otPend + " jam menunggu ACC)" : "") +
     "   ·   Cuti " + cnt.Cuti + " · Izin " + cnt.Izin + " · Sakit " + cnt.Sakit + " · Alpha " + cnt.Alpha +
     "   ·   Diperbarui otomatis " + Utilities.formatDate(new Date(), TZ, "dd/MM/yyyy HH:mm")).setFontColor("#6a6c78");
   sh.getRange(4, 1, 1, W).setValues([head]).setFontWeight("bold").setBackground("#23252f").setFontColor("#ffffff").setVerticalAlignment("middle").setWrap(true);
@@ -512,9 +521,9 @@ function rebuildAll_(team, db, ab) {
   team = (team || readTeam_()).filter(m => roleOf_(m.jabatan) !== "sup");
   db = db || rows_(SH.db);
   ab = ab || rows_(SH.absen);
-  const head = ["Tanggal", "Hari", "Nama", "Jabatan", "Kehadiran", "Brand", "Jumlah", "Satuan", "Facebook", "YouTube", "Shopee", "Jenis", "Desain campaign",
+  const head = ["Tanggal", "Hari", "Nama", "Jabatan", "Kehadiran", "Brand", "Jumlah", "Satuan", "Facebook", "YouTube", "Shopee", "File data", "Jenis", "Desain campaign",
                 "Tugas harian / keterangan", "Link hasil kerja", "Kendala", "Solusi", "Lembur (jam)", "Status lembur", "Diperbarui"];
-  const W = head.length, iLink = 14, iKend = 15, iOt = 17;
+  const W = head.length, iLink = 15, iKend = 16, iOt = 18;
   const vals = [], bgs = [], fcs = [], fws = [], groupRows = [];
   team.slice().sort(teamSort_).forEach(m => {
     const role = roleOf_(m.jabatan), unit = role === "admin" ? "upload" : role === "dg" ? "desain" : "video";
@@ -530,13 +539,13 @@ function rebuildAll_(team, db, ab) {
       let bg;
       if (it.a) {
         const st = String(it.a[3] || "");
-        vals.push([dateCell_(d), hari_(d), m.name, m.jabatan, st.toUpperCase(), "-", 0, unit, role === "admin" ? 0 : "-", role === "admin" ? 0 : "-", role === "admin" ? 0 : "-", "", "", String(it.a[4] || ""), "", "", "", 0, "", String(it.a[6] || "")]);
+        vals.push([dateCell_(d), hari_(d), m.name, m.jabatan, st.toUpperCase(), "-", 0, unit, role === "admin" ? 0 : "-", role === "admin" ? 0 : "-", role === "admin" ? 0 : "-", 0, "", "", String(it.a[4] || ""), "", "", "", 0, "", String(it.a[6] || "")]);
         bg = new Array(W).fill(st === "Alpha" ? C_ALPHA : C_WARN);
       } else {
         const r = it.r, ls = lemburStatus_(r);
         vals.push([dateCell_(d), hari_(d), m.name, m.jabatan, "Hadir", brand_(r[3]),
           Number(r[4]) || 0, unit,
-          role === "admin" ? Number(r[5]) || 0 : "-", role === "admin" ? Number(r[6]) || 0 : "-", role === "admin" ? Number(r[7]) || 0 : "-",
+          role === "admin" ? Number(r[5]) || 0 : "-", role === "admin" ? Number(r[6]) || 0 : "-", role === "admin" ? Number(r[7]) || 0 : "-", filesOf_(r),
           String(r[8] || ""), String(r[9] || ""), String(r[10] || ""), String(r[11] || ""), String(r[12] || ""), String(r[13] || ""),
           Number(r[14]) || 0, LSTAT[ls] || "", String(r[16] || "")]);
         bg = new Array(W).fill(band ? "#ffffff" : C_BAND);
@@ -560,13 +569,13 @@ function rebuildAll_(team, db, ab) {
     sh.getRange(4, 1, vals.length, W).setNumberFormat("@").setValues(vals).setBackgrounds(bgs).setFontColors(fcs).setFontWeights(fws).setVerticalAlignment("top").setWrap(true);
     sh.getRange(4, iLink + 1, vals.length, 1).setRichTextValues(vals.map((v, i) => [groupRows.indexOf(i + 1) >= 0 ? SpreadsheetApp.newRichTextValue().setText(v[iLink]).build() : linkRich_(v[iLink])]));
     sh.getRange(4, 1, vals.length, 1).setNumberFormat("dd/mm/yyyy");
-    [6, 8, 9, 10].forEach(c => sh.getRange(4, c + 1, vals.length, 1).setNumberFormat("0").setHorizontalAlignment("center"));
+    [6, 8, 9, 10, 11].forEach(c => sh.getRange(4, c + 1, vals.length, 1).setNumberFormat("0").setHorizontalAlignment("center"));
     sh.getRange(4, iOt + 1, vals.length, 1).setNumberFormat("0.#").setHorizontalAlignment("center");
     rewriteDates_(sh, 4, vals);
     groupRows.forEach(i => sh.getRange(3 + i, 1, 1, W).merge());
   }
   sh.setFrozenRows(3);
-  const widths = [92, 70, 130, 120, 90, 60, 70, 70, 80, 80, 80, 120, 170, 320, 300, 200, 200, 90, 110, 135];
+  const widths = [92, 70, 130, 120, 90, 60, 70, 70, 80, 80, 80, 80, 120, 170, 320, 300, 200, 200, 90, 110, 135];
   widths.forEach((w, i) => sh.setColumnWidth(i + 1, w));
   PropertiesService.getScriptProperties().setProperty("lastAll", String(Date.now()));
 }

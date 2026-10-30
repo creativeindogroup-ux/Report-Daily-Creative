@@ -1,6 +1,26 @@
 # Panduan — Daily Report Creative (GitHub + Google Sheets)
 
-## Update ke versi 2.2 (± 3 menit)
+## Update ke versi 2.3 (± 3 menit)
+
+Isi versi 2.3:
+- **Cuti / Izin / Sakit tidak memotong target.** Konten tetap terjadwal, jadi form report tetap terbuka di hari itu. Video yang tayang bisa dicatat oleh orangnya sendiri atau oleh atasan, dan tetap dihitung ke target.
+- **File data:** link Google Docs / Spreadsheet / Slides di kolom Link otomatis dihitung sebagai file data. Angkanya bisa diubah manual, dan tombol "hitung otomatis lagi" mengembalikan perhitungan otomatis.
+  - File data tidak ikut ke target, tetapi tampil di kalender (contoh: "5 +2f"), kartu rekap, Google Sheet, dan Excel.
+- **Rekap per brand** menggantikan ringkasan mingguan: 7 kartu brand berisi video Content Creator, desain Desain Grafis, upload Admin (FB/YT/Shopee), dan file data. Excel juga punya sheet **Rekap Brand**.
+- **Tampilan baru:** hijau dengan panel kaca ala iPhone (liquid glass), font Urbanist, cincin capaian target minggu ini, dan chip filter brand.
+
+### Langkahnya
+1. **GitHub:** sudah otomatis dari Claude.
+2. **Google Sheets** (wajib, karena ada kolom baru "File data"):
+   - Buka **Extensions → Apps Script**, lalu tekan **Ctrl + A → Delete**.
+   - Tempel `Code.gs` terbaru dari GitHub (**Copy raw file**), lalu klik **Save**.
+   - Pilih **`setupAwal`**, lalu klik **▶ Run**, dan tunggu sampai *Execution completed*.
+   - Klik **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**.
+3. Buka website dengan **Ctrl + Shift + R**.
+
+---
+
+## Update ke versi 2.2 (sudah dilakukan)
 
 Isi versi 2.2:
 - **Hapus report:** tombol **Hapus report** di form harian. Klik dua kali untuk memastikan. Hanya pemilik report atau atasan/pengawas yang bisa menghapus.

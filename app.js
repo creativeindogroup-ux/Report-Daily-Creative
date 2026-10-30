@@ -76,7 +76,8 @@ const absOf = (cc, d) => S.absen[cc + "_" + d] || null;
 /** jumlah hari Cuti/Izin/Sakit (Senin–Sabtu) dalam satu minggu: mengurangi target */
 const offDays = (cc, wk) => { let n = 0; for (let i = 0; i < 6; i++) { const a = absOf(cc, add(wk, i)); if (a && a.status !== "Alpha") n++; } return n; };
 /** target efektif = target × hari kerja tersisa / 6 */
-const tgtEff = (cc, b, wk) => { const t = tgt(cc, b, wk); return t ? Math.round(t * Math.max(0, 6 - offDays(cc, wk)) / 6) : 0; };
+/** konten tetap terjadwal saat cuti/izin/sakit, jadi target tidak dipotong */
+const tgtEff = (cc, b, wk) => tgt(cc, b, wk);
 const initials = n => String(n || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
 function range() { const [y, m] = S.month.split("-").map(Number); const first = S.month + "-01", last = ds(new Date(y, m, 0)); return { first, last, start: monday(first), end: add(monday(last), 6) }; }
 const curWeek = () => monday(S.sel.startsWith(S.month) ? S.sel : (TODAY.startsWith(S.month) ? TODAY : S.month + "-01"));
@@ -93,6 +94,11 @@ const scope = () => S.view ? { cc: S.view, brand: curBrand() } : { cc: "", brand
 const inScope = (e, sc) => ccById(e.cc) && (!sc.cc || e.cc === sc.cc) && (!sc.brand || e.brand === sc.brand);
 function ents(from, to, sc = scope()) { return Object.values(S.entries).filter(e => e.date >= from && e.date <= to && inScope(e, sc)); }
 const sum = (arr, k) => arr.reduce((a, e) => a + (+e[k] || 0), 0);
+/** file data = link Google Docs / Spreadsheet / Slides */
+const FILE_RE = /docs\.google\.com\/(document|spreadsheets|presentation)\//i;
+const countFiles = links => (links || []).filter(l => FILE_RE.test(l)).length;
+const filesOf = e => e.files === undefined || e.files === "" || e.files === null ? countFiles(e.links) : +e.files || 0;
+const sumFiles = arr => arr.reduce((a, e) => a + filesOf(e), 0);
 /** target harian/mingguan untuk filter aktif */
 function scopeTarget(wk, sc = scope()) {
   if (sc.cc) { const c = ccById(sc.cc); return (sc.brand ? [sc.brand] : brandsOf(c)).reduce((a, b) => a + tgtEff(c.id, b, wk), 0); }
@@ -216,14 +222,26 @@ function cropInit() {
 }
 
 /* ---------------- render: hero & nav ---------------- */
+/** cincin capaian target minggu ini (semua orang / filter brand) */
+function heroRing() {
+  const wk = curWeek(), sc = { cc: "", brand: S.brandF }, v = sum(ents(wk, add(wk, 6), sc), "qty"), t = scopeTarget(wk, sc);
+  const pct = t ? Math.min(100, Math.round(v / t * 100)) : 0, R = 34, C = 2 * Math.PI * R;
+  return `<div class="ring" title="Capaian target minggu ini: ${v} dari ${t || "–"}"><svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="${R}" class="rbg"/><circle cx="42" cy="42" r="${R}" class="rfg" stroke-dasharray="${C * pct / 100} ${C}"/></svg><b>${t ? pct + "%" : "–"}</b><span>target minggu ini</span></div>`;
+}
+function heroStats() {
+  const { first, last } = range(), es = ents(first, last, { cc: "", brand: S.brandF }).filter(e => roleOf(ccById(e.cc)) !== "sup");
+  const st = (v, l) => `<div class="hstat"><span>${l}</span><b>${v}</b></div>`;
+  return `<div class="hstats">${st(sum(es, "qty"), "Konten bulan ini")}${st(sumFiles(es), "File data")}${st(fmt(sumOt(es)) + "<small> jam</small>", "Lembur disetujui")}</div>`;
+}
 function renderHero() {
   const h = $("hero"), [y, m] = S.month.split("-").map(Number), per = BULAN[m - 1] + " " + y;
   if (!S.view) {
     const me = ccById(S.me), cover = S.photosBig.__cover || S.photos.__cover;
     h.className = "hero home";
     h.innerHTML = `<div class="hero-l"><span class="hpill">Divisi Creative Indogroup · ${per}</span>
-      <h1>Daily Report<br>Creative</h1><p class="hsub">Rekap konten video, desain grafis dan upload admin untuk 7 brand.</p>
-      <div class="hfoot"><span class="arrow"></span>${me && roleOf(me) !== "sup" ? `<button class="pbtn" data-open="${esc(me.id)}">Isi report saya</button>` : ""}</div></div>
+      <div class="htitle"><h1>Daily Report<br>Creative</h1>${heroRing()}</div>
+      ${heroStats()}
+      <div class="hfoot">${me && roleOf(me) !== "sup" ? `<button class="pbtn" data-open="${esc(me.id)}">Isi report saya</button>` : ""}</div></div>
       <div class="hero-r cover">${cover ? `<img class="coverimg" src="${cover}" alt="Cover tim Creative Indogroup">` : `<div class="coverph"><b>Cover tim</b><span>Foto 16:9, misalnya foto tim atau studio</span></div>`}
       ${S.isAdmin ? `<button class="photo-btn" data-photo="__cover">${cover ? "Ganti cover" : "Tambah cover"}</button>` : ""}</div>`;
     return;
@@ -242,7 +260,9 @@ function renderNav() {
   sel.innerHTML = `<option value="">All Creative</option>` + workers().map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.id === S.me ? " (saya)" : ""}</option>`).join("");
   if (S.view && !ccById(S.view) && S.ready) S.view = "";
   sel.value = S.view;
-  const bf = $("brandF"); bf.hidden = !!S.view;
+  const bf = $("brandF"); bf.hidden = true;
+  const chips = $("brandChips"); chips.hidden = !!S.view;
+  chips.innerHTML = [["", "Semua brand"], ...BRANDS].map(([k, n]) => `<button type="button" class="bchip${S.brandF === k ? " on" : ""}" data-bf="${k}" title="${esc(n)}">${k || n}</button>`).join("");
   bf.innerHTML = `<option value="">Semua brand</option>` + BRANDS.map(b => `<option value="${b[0]}">${b[0]} · ${b[1]}</option>`).join("");
   bf.value = S.brandF;
 }
@@ -273,7 +293,7 @@ function renderPeople() {
     return `<article class="pcard">
       <div class="phead">${ava(c)}<div style="min-width:0"><div class="pname">${esc(c.name)}</div><div class="prole">${esc(c.jabatan || "Content Creator")}</div></div></div>
       <div style="display:grid;gap:8px">${rows}</div>${plat}
-      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="ot"><b>${fmt(sumOt(month))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
+      <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="fd"><b>${sumFiles(month)}</b><span>file data</span></div><div class="ot"><b>${fmt(sumOt(month))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
       <div class="pfoot"><span class="last">${lf ? "Terakhir mengisi " + shortD(ds(lf)) + " " + pad(lf.getHours()) + ":" + pad(lf.getMinutes()) : `${days ? "" : "Belum mengisi bulan ini"}`}</span><button class="pbtn" data-open="${esc(c.id)}">Lihat report</button></div>
     </article>`;
   }).join("");
@@ -300,9 +320,9 @@ function renderPersonTop() {
     <div class="stat wkstat"><div class="l">${u[0].toUpperCase() + u.slice(1)} minggu ini · ${shortD(wk)} – ${shortD(add(wk, 6))}</div>
       <div class="v num">${wv}<small> / ${t || "–"}</small></div>
       ${!cur && shown.length ? `<div class="wkrows">${per}</div>` : `<div class="prog${t && wv >= t ? " done" : ""}"><i style="width:${p}%"></i></div>`}
-      <div class="s">${!t ? (rawT ? "Target minggu ini 0 karena tidak masuk sepanjang minggu" : "Target minggu ini belum diisi atasan") : wv >= t ? "Target minggu ini tercapai" : "Kurang " + (t - wv) + " " + u + " lagi"}${off && rawT ? ` · target disesuaikan dari ${rawT} (${off} hari cuti/izin/sakit)` : ""}</div></div>
+      <div class="s">${!t ? (rawT ? "" : "Target minggu ini belum diisi atasan") : wv >= t ? "Target minggu ini tercapai" : "Kurang " + (t - wv) + " " + u + " lagi"}${off ? ` · ${off} hari cuti/izin/sakit (target tetap, konten terjadwal)` : ""}</div></div>
     <div class="stat"><div class="l">Total ${u} bulan ini${cur ? " · " + cur : ""}</div><div class="v num">${sum(mE, "qty")}</div>
-      <div class="s">${role === "admin" ? `Facebook ${sum(mE, "fb")} · YouTube ${sum(mE, "yt")} · Shopee ${sum(mE, "shopee")}` : new Set(mE.map(e => e.date)).size + " hari ada isian"}</div></div>
+      <div class="s">${role === "admin" ? `Facebook ${sum(mE, "fb")} · YouTube ${sum(mE, "yt")} · Shopee ${sum(mE, "shopee")}` : new Set(mE.map(e => e.date)).size + " hari ada isian"} · <b>${sumFiles(mE)}</b> file data</div></div>
     <div class="stat ot"><div class="l">Total lembur bulan ini</div><div class="v num">${fmt(sumOt(otAll))}<small> jam</small></div>
       <div class="s">${new Set(otAll.filter(e => otA(e) > 0).map(e => e.date)).size} hari lembur${sumPend(otAll) ? ` · <b class="pend">+${fmt(sumPend(otAll))} j menunggu ACC</b>` : ""} · semua brand${(() => { const o = absCount(c.id, first, last); const t2 = absShort(o); return t2 ? " · " + STATUS.filter(k => o[k]).map(k => k + " " + o[k]).join(", ") : ""; })()}</div></div>`;
 }
@@ -320,7 +340,7 @@ function renderCal() {
       let abd = "";
       if (sc.cc) { const a = absOf(sc.cc, s); if (a) abd = `<span class="abdg st-${a.status}">${a.status}</span>`; }
       else { const n = membersInScope().filter(c => absOf(c.id, s)).length; if (n) abd = `<span class="abdg">${n} absen</span>`; }
-      h += `<button class="${cls}${abd && sc.cc ? " absent" : ""}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten${o ? ", lembur " + fmt(o) + " jam" : ""}${abd ? ", " + abd.replace(/<[^>]+>/g, "") : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}</span>` : abd}${o ? `<span class="ot">+${fmt(o)}j</span>` : sumPend(es) ? `<span class="ot pend" title="Lembur menunggu ACC">+${fmt(sumPend(es))}j?</span>` : ""}${es.length && abd ? abd : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
+      h += `<button class="${cls}${abd && sc.cc ? " absent" : ""}" data-d="${s}" aria-label="${longDate(s)}: ${v} konten, ${sumFiles(es)} file data${o ? ", lembur " + fmt(o) + " jam" : ""}${abd ? ", " + abd.replace(/<[^>]+>/g, "") : ""}"><span class="n">${pd(s).getDate()}</span>${es.length ? `<span class="vid">${v}${sumFiles(es) ? `<small class="fdn" title="File data">+${sumFiles(es)}f</small>` : ""}</span>` : abd}${o ? `<span class="ot">+${fmt(o)}j</span>` : sumPend(es) ? `<span class="ot pend" title="Lembur menunggu ACC">+${fmt(sumPend(es))}j?</span>` : ""}${es.length && abd ? abd : ""}${es.some(x => x.kendala) ? '<span class="kdot" title="Ada kendala"></span>' : ""}</button>`;
     }
   }
   $("cal").innerHTML = h;
@@ -328,36 +348,31 @@ function renderCal() {
 
 /* ---------------- render: ringkasan per minggu ---------------- */
 function renderSummary() {
-  const { first, last, start, end } = range(), sc = scope(), wkNow = curWeek(), [y, m] = S.month.split("-").map(Number);
+  const { first, last } = range(), [y, m] = S.month.split("-").map(Number);
   const c = S.view ? ccById(S.view) : null, role = c ? roleOf(c) : "";
-  const cnt = (from, to) => {
-    const es = ents(from, to, sc), by = r => es.filter(e => roleOf(ccById(e.cc)) === r);
-    const a = by("admin");
-    const who = sc.cc ? [sc.cc] : membersInScope().map(c => c.id), ab = { Cuti: 0, Izin: 0, Sakit: 0, Alpha: 0 };
-    who.forEach(id => { const o = absCount(id, from, to); STATUS.forEach(k => ab[k] += o[k]); });
-    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"), adm: sum(a, "qty"), qty: sum(es, "qty"), ot: sumOt(es), ab };
+  const brands = c ? (role === "dg" ? CODES.filter(b => homeBrands(c).includes(b)) : brandsOf(c)) : (S.brandF ? [S.brandF] : CODES);
+  const agg = es => {
+    const by = r => es.filter(e => roleOf(ccById(e.cc)) === r), a = by("admin");
+    return { cc: sum(by("cc"), "qty"), dg: sum(by("dg"), "qty"), adm: sum(a, "qty"), fb: sum(a, "fb"), yt: sum(a, "yt"), sp: sum(a, "shopee"),
+      files: sumFiles(es), ot: sumOt(es), n: new Set(es.map(e => e.cc)).size, days: new Set(es.map(e => e.date)).size };
   };
-  const z = n => n ? n : `<span class="z">0</span>`;
-  const abT = v => { const t = absShort(v.ab); return t ? `<span class="abtxt" title="${STATUS.map(k => k + " " + v.ab[k]).join(", ")}">${t}</span>` : `<span class="z">–</span>`; };
-  const rows = []; let k = 1;
-  for (let mon = start; mon <= end; mon = add(mon, 7)) rows.push({ label: `Minggu ${k++}`, sub: `${shortD(mon)} – ${shortD(add(mon, 6))}`, cur: mon === wkNow, v: cnt(mon, add(mon, 6)), t: scopeTarget(mon, sc) });
-  const tot = cnt(first, last), totT = rows.reduce((a, r) => a + r.t, 0);
-  const cap = (v, t) => t ? `<span class="${v >= t ? "ok" : "no"}">${Math.round(v / t * 100)}%</span>` : `<span class="z">–</span>`;
-  let head, line;
-  if (!c) {
-    head = `<th>Minggu</th><th><span class="grp">Content Creator</span>Video</th><th><span class="grp">Desain Grafis</span>Desain</th><th><span class="grp">Admin</span>Facebook</th><th><span class="grp">Admin</span>YouTube</th><th><span class="grp">Admin</span>Shopee</th><th><span class="grp">Admin</span>Total upload</th><th>Lembur</th><th>Tidak hadir</th>`;
-    line = v => `<td>${z(v.cc)}</td><td>${z(v.dg)}</td><td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
-  } else if (role === "admin") {
-    head = `<th>Minggu</th><th>Facebook</th><th>YouTube</th><th>Shopee</th><th>Total upload</th><th>Target</th><th>Capaian</th><th>Lembur</th><th>Kehadiran</th>`;
-    line = (v, t) => `<td>${z(v.fb)}</td><td>${z(v.yt)}</td><td>${z(v.sp)}</td><td>${z(v.adm)}</td><td>${t || "–"}</td><td>${cap(v.adm, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
-  } else {
-    const u = UNIT[role];
-    head = `<th>Minggu</th><th>${u[0].toUpperCase() + u.slice(1)}</th><th>Target</th><th>Capaian</th><th>Lembur</th><th>Kehadiran</th>`;
-    line = (v, t) => `<td>${z(v.qty)}</td><td>${t || "–"}</td><td>${cap(v.qty, t)}</td><td>${v.ot ? fmt(v.ot) + " j" : z(0)}</td><td>${abT(v)}</td>`;
-  }
-  $("sumSub").textContent = `${c ? c.name + (sc.brand ? " · " + sc.brand : " · semua brand") : "All Creative" + (S.brandF ? " · " + S.brandF : " · semua brand")} · minggu dihitung Senin–Minggu, total hanya tanggal di ${BULAN[m - 1]}`;
-  $("sumTable").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${rows.map(r => `<tr class="${r.cur ? "cur" : ""}"><td>${r.label}<small>${r.sub}</small></td>${line(r.v, r.t)}</tr>`).join("")}</tbody>
-    <tfoot><tr><td>Total ${BULAN[m - 1]}<small>${y}</small></td>${line(tot, totT)}</tr></tfoot>`;
+  const base = es => es.filter(e => roleOf(ccById(e.cc)) !== "sup" && (!c || e.cc === c.id));
+  const monthEs = base(Object.values(S.entries).filter(e => e.date >= first && e.date <= last && ccById(e.cc)));
+  const tot = agg(monthEs.filter(e => brands.includes(e.brand)));
+  const metric = (v, label, sub, cls = "") => `<div class="bm ${cls}"><b>${v}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const plat = v => `FB ${v.fb} · YT ${v.yt} · Shopee ${v.sp}`;
+  const body = v => !c
+    ? metric(v.cc, "video CC") + metric(v.dg, "desain DG") + metric(v.adm, "upload Admin", plat(v)) + metric(v.files, "file data", "", "fdm")
+    : role === "admin" ? metric(v.adm, "upload", plat(v)) + metric(v.files, "file data", "", "fdm") + metric(fmt(v.ot) + "j", "lembur")
+    : metric(role === "dg" ? v.dg : v.cc, UNIT[role]) + metric(v.files, "file data", "", "fdm") + metric(fmt(v.ot) + "j", "lembur");
+  const card = (b, v, total) => {
+    const empty = !v.cc && !v.dg && !v.adm && !v.files;
+    return `<article class="bcard${total ? " total" : ""}${empty && !total ? " empty" : ""}">
+      <div class="bhead">${total ? `${c ? ava(c) : `<span class="bcode">All</span>`}<div><b>${c ? esc(c.name) : "Semua brand"}</b><span>${BULAN[m - 1]} ${y}</span></div>` : `<span class="bcode">${b}</span><div><b>${esc(BNAME[b])}</b><span>${empty ? "Belum ada isian" : !c ? v.n + " orang · " + v.days + " hari" : v.days + " hari ada isian"}</span></div>`}</div>
+      <div class="bmetrics">${body(v)}</div></article>`;
+  };
+  $("sumSub").textContent = `${c ? c.name : "All Creative"} · ${BULAN[m - 1]} ${y} · video Content Creator, desain Desain Grafis, upload Admin dan file data per brand`;
+  $("brandGrid").innerHTML = card("", tot, true) + brands.map(b => card(b, agg(monthEs.filter(e => e.brand === b)), false)).join("");
 }
 
 /* ---------------- render: panel tanggal ---------------- */
@@ -372,7 +387,8 @@ function qtyText(e, c) {
   return `<span class="qty">${e.qty}</span> ${UNIT[r]}`;
 }
 function entryBlock(e, c) {
-  return `<div class="ent"><span class="tg">${esc(e.brand)}</span>${qtyText(e, c)}${lemburBadge(e)}${(e.jenis || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}${(e.campaign || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}</div>
+  const fd = filesOf(e);
+  return `<div class="ent"><span class="tg">${esc(e.brand)}</span>${qtyText(e, c)}${fd ? `<span class="fdx">${fd} file data</span>` : ""}${lemburBadge(e)}${(e.jenis || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}${(e.campaign || []).map(j => `<span class="tg c">${esc(j)}</span>`).join("")}</div>
     ${e.tugas ? `<div class="tt">${esc(e.tugas)}</div>` : ""}${linkOut(e.links)}${e.kendala ? `<div class="kdl"><b>Kendala:</b> ${esc(e.kendala)}${e.solusi ? ` · <b>Solusi:</b> ${esc(e.solusi)}` : ""}</div>` : ""}`;
 }
 function otSum(cc, a, b) { return sumOt(Object.values(S.entries).filter(e => e.cc === cc && e.date >= a && e.date <= b)); }
@@ -405,7 +421,7 @@ function renderDay() {
         <div class="absmore" id="absMore" hidden><input type="text" id="absNote" placeholder="Keterangan (opsional), misalnya: cuti tahunan" value="${esc(ab ? ab.note : "")}" aria-label="Keterangan">
         <label class="until">Sampai tanggal <input type="date" id="absUntil" min="${s}" value="${s}"></label><button type="button" class="pbtn" id="absSave">Simpan</button></div></div>`
     : (st ? `<div class="absnote st-${st}"><b>${st}</b>${ab.note ? " · " + esc(ab.note) : ""}${st === "Alpha" && canEdit(c.id) ? " · hanya atasan yang bisa mengubah" : ""}</div>` : "");
-  const absMsg = st ? `<div class="empty">Tercatat <b>${st}</b> di tanggal ini, jadi report tidak perlu diisi.${absEditable ? " Pilih <b>Hadir</b> kalau ternyata tetap bekerja." : ""}</div>` : "";
+  const absMsg = st ? `<div class="absinfo">Tercatat <b>${st}</b>. Konten yang tetap tayang sesuai jadwal tetap dicatat di bawah dan tetap dihitung ke target.</div>` : "";
   const bindAbs = () => {
     const box = $("absBox"); if (!box) return;
     let pick = st;
@@ -440,8 +456,7 @@ function renderDay() {
     p.innerHTML = head + (e.updatedAt ? `<div class="ro">${entryBlock(e, c)}</div>` : (st ? "" : `<div class="empty">${esc(c.name)} belum mengisi report ${b} tanggal ini.</div>`)) + `<p class="hint">Hanya ${esc(c.name)} dan atasan yang bisa mengisi report ini.</p>`;
     return;
   }
-  if (st && !e.updatedAt) { p.innerHTML = head + absMsg; bindAbs(); return;
-  }
+
 
   const stepper = (id, val, label) => `<div class="stepper"><button type="button" data-step="-1" data-for="${id}" aria-label="Kurangi ${label}">−</button><input type="number" id="${id}" min="0" inputmode="numeric" value="${+val || 0}" aria-label="${label}"><button type="button" data-step="1" data-for="${id}" aria-label="Tambah ${label}">+</button></div>`;
   const chip = (grp, v, on, cls) => `<button type="button" class="chip${cls ? " " + cls : ""}" data-grp="${grp}" data-v="${esc(v)}" aria-pressed="${on}">${esc(v)}</button>`;
@@ -460,11 +475,14 @@ function renderDay() {
   } else {
     qtyBlock = `<div class="field"><label class="lbl" for="qIn">Video diupload hari ini</label>${stepper("qIn", e.qty, "Jumlah video")}${dT ? `<span class="hint">Target harian ± ${fmt(dT)} video</span>` : ""}</div>`;
   }
-  p.innerHTML = head + `<form id="dayForm" style="display:grid;gap:12px" autocomplete="off">
+  const fdVal = e.updatedAt ? filesOf(e) : 0, fdManual = !!+e.filesManual;
+  p.innerHTML = head + absMsg + `<form id="dayForm" style="display:grid;gap:12px" autocomplete="off" data-fdm="${fdManual ? 1 : ""}">
       ${qtyBlock}
       <div class="field"><label class="lbl" for="tIn">Tugas harian</label><textarea id="tIn" placeholder="Tulis bebas aktivitasmu hari ini untuk brand ${b}, contoh:&#10;- Upload 3 video hardselling&#10;- Shooting konten styling di studio">${esc(e.tugas || "")}</textarea></div>
       <div class="field"><span class="lbl">Link hasil kerja</span><div class="links" id="links">${(e.links && e.links.length ? e.links : [""]).map(linkRow).join("")}</div>
-        <button type="button" class="ghostbtn" id="addLink">+ Tambah link</button><span class="hint">Link TikTok, YouTube, Shopee, Google Drive atau file lain</span></div>
+        <button type="button" class="ghostbtn" id="addLink">+ Tambah link</button><span class="hint">Link TikTok, YouTube, Shopee, Google Drive, Docs, Spreadsheet atau file lain</span></div>
+      <div class="field fdfield"><label class="lbl" for="fdIn">File data (Google Docs / Spreadsheet)</label>${stepper("fdIn", fdVal, "Jumlah file data")}
+        <span class="hint" id="fdHint">${fdManual ? `Diubah manual · <button type="button" class="linkbtn" id="fdAuto">hitung otomatis lagi</button>` : "Dihitung otomatis dari link Docs / Spreadsheet di atas. Boleh diubah manual."}</span></div>
       <div class="two"><div class="field"><label class="lbl" for="kIn">Kendala</label><textarea id="kIn" class="short" placeholder="Kosongkan kalau tidak ada">${esc(e.kendala || "")}</textarea></div>
         <div class="field"><label class="lbl" for="sIn">Solusi</label><textarea id="sIn" class="short" placeholder="Langkah yang diambil">${esc(e.solusi || "")}</textarea></div></div>
       <div class="field"><label class="lbl" for="oIn">Lembur (jam)</label><input type="number" id="oIn" min="0" step="0.5" inputmode="decimal" value="${+e.lembur || ""}" placeholder="0">
@@ -484,19 +502,23 @@ function renderDay() {
     const d = { tugas: $("tIn").value.trim(), links: [...f.querySelectorAll(".lk input")].map(i => normUrl(i.value)).filter(Boolean), kendala: $("kIn").value.trim(), solusi: $("sIn").value.trim(), lembur: Math.max(0, parseFloat($("oIn").value) || 0) };
     if (role === "admin") { d.fb = num("fbIn"); d.yt = num("ytIn"); d.shopee = num("spIn"); d.qty = d.fb + d.yt + d.shopee; }
     else d.qty = num("qIn");
+    d.files = num("fdIn"); d.filesManual = f.dataset.fdm ? 1 : 0;
     if (role === "dg") { const on = g => [...f.querySelectorAll(`.chip[data-grp="${g}"][aria-pressed="true"]`)].map(x => x.dataset.v); d.jenis = on("jenis"); d.campaign = d.jenis.includes("Campaign") ? on("camp") : []; }
     return d;
   };
-  const same = (d, old) => Object.keys(d).every(k => JSON.stringify(d[k]) === JSON.stringify(old[k] === undefined ? (Array.isArray(d[k]) ? [] : typeof d[k] === "number" ? 0 : "") : old[k]));
+  const same = (d, old) => Object.keys(d).every(k => JSON.stringify(d[k]) === JSON.stringify(k === "files" ? filesOf(old) : k === "filesManual" ? (+old.filesManual || 0) : old[k] === undefined ? (Array.isArray(d[k]) ? [] : typeof d[k] === "number" ? 0 : "") : old[k]));
+  const autoFiles = () => { if (f.dataset.fdm) return; $("fdIn").value = countFiles([...f.querySelectorAll(".lk input")].map(i => normUrl(i.value))); };
+  const setManual = on => { f.dataset.fdm = on ? "1" : ""; $("fdHint").innerHTML = on ? `Diubah manual · <button type="button" class="linkbtn" id="fdAuto">hitung otomatis lagi</button>` : "Dihitung otomatis dari link Docs / Spreadsheet di atas. Boleh diubah manual."; };
   let timer = null;
   const flush = () => { clearTimeout(timer); timer = null; AUTO.flush = null; if (!document.body.contains(f)) return; const d = collect(); if (same(d, S.entries[ekey(cc, s, b)] || {})) { $("saveState").textContent = "Tersimpan"; return; } saveEntry(cc, s, b, d, true); };
   const schedule = () => { clearTimeout(timer); $("saveState").textContent = "Menyimpan…"; $("saveState").classList.remove("err"); timer = setTimeout(flush, AUTOSAVE_MS); AUTO.flush = flush; if ($("admTot")) $("admTot").textContent = num("fbIn") + num("ytIn") + num("spIn"); };
-  f.addEventListener("input", schedule);
+  f.addEventListener("input", ev => { if (ev.target.id === "fdIn") setManual(true); else if (ev.target.closest(".lk")) autoFiles(); schedule(); });
   f.addEventListener("click", ev => {
-    const st = ev.target.closest("[data-step]"); if (st) { const i = $(st.dataset.for); i.value = Math.max(0, (+i.value || 0) + +st.dataset.step); schedule(); return; }
+    const st = ev.target.closest("[data-step]"); if (st) { const i = $(st.dataset.for); i.value = Math.max(0, (+i.value || 0) + +st.dataset.step); if (st.dataset.for === "fdIn") setManual(true); schedule(); return; }
+    if (ev.target.id === "fdAuto") { setManual(false); autoFiles(); schedule(); return; }
     const ch = ev.target.closest(".chip"); if (ch) { ch.setAttribute("aria-pressed", ch.getAttribute("aria-pressed") !== "true"); if (ch.dataset.v === "Campaign") $("campBox").hidden = ch.getAttribute("aria-pressed") !== "true"; schedule(); return; }
     if (ev.target.id === "addLink") { $("links").insertAdjacentHTML("beforeend", linkRow("")); $("links").lastElementChild.querySelector("input").focus(); return; }
-    const r = ev.target.closest("[data-rmlink]"); if (r) { const rows = $("links").children; if (rows.length > 1) r.parentElement.remove(); else rows[0].querySelector("input").value = ""; schedule(); }
+    const r = ev.target.closest("[data-rmlink]"); if (r) { const rows = $("links").children; if (rows.length > 1) r.parentElement.remove(); else rows[0].querySelector("input").value = ""; autoFiles(); schedule(); }
     if (ev.target.id === "mvBtn") { if (AUTO.flush) AUTO.flush(); moveEntry(cc, s, b, $("mvTo").value); }
     const la = ev.target.closest("[data-lacc]"); if (la) { if (AUTO.flush) AUTO.flush(); approveLembur([ekey(cc, s, b)], la.dataset.lacc); return; }
     if (ev.target.id === "delBtn") {
@@ -754,6 +776,7 @@ $("photoIn").addEventListener("change", e => { const f = e.target.files && e.tar
 cropInit();
 $("ccSel").addEventListener("change", e => openView(e.target.value));
 $("brandF").addEventListener("change", e => { S.brandF = e.target.value; ls.set("brandF", S.brandF); renderAll(); });
+$("brandChips").addEventListener("click", e => { const b = e.target.closest("[data-bf]"); if (!b) return; S.brandF = b.dataset.bf; ls.set("brandF", S.brandF); renderAll(); });
 document.addEventListener("change", e => { const t = e.target.closest("[data-tcc]"); if (t) saveTarget(t.dataset.tcc, t.dataset.tb, t.dataset.tw, t.value); });
 $("cal").addEventListener("click", e => {
   const c = e.target.closest("[data-d]"); if (!c) return;
@@ -853,8 +876,18 @@ async function exportXlsx() {
     mons.forEach((w, i) => { const row = sm.getRow(4 + i); row.values = ["Minggu " + (i + 1), shortD(w) + " – " + shortD(add(w, 6)), ...agg(all.filter(e => e.date >= w && e.date <= add(w, 6)))]; paint(row, i % 2 ? GREY : "FFFFFFFF"); });
     const smT = sm.getRow(4 + mons.length); smT.values = ["Total " + BULAN[m - 1], "tanggal 1–" + pd(last).getDate(), ...agg(inMonth)]; paint(smT, BLUE, { bold: true, color: { argb: "FFFFFFFF" } });
 
+    // 2b. Rekap per brand
+    const rb = wb.addWorksheet("Rekap Brand");
+    const rbCols = [["Brand", 9], ["Nama brand", 20], ["Video (CC)", 12], ["Desain (DG)", 12], ["Upload Admin", 13], ["Facebook", 11], ["YouTube", 11], ["Shopee", 11], ["File data", 11], ["Orang mengisi", 13], ["Lembur disetujui (jam)", 16]];
+    rb.columns = rbCols.map(c => ({ width: c[1] })); title(rb, "REKAP PER BRAND · " + periode.toUpperCase(), rbCols.length);
+    rb.getRow(3).values = rbCols.map(c => c[0]); head(rb.getRow(3));
+    const brAgg = es => { const by = q => es.filter(e => roleOf(ccById(e.cc)) === q), a = by("admin"); return [sum(by("cc"), "qty"), sum(by("dg"), "qty"), sum(a, "qty"), sum(a, "fb"), sum(a, "yt"), sum(a, "shopee"), sumFiles(es), new Set(es.map(e => e.cc)).size, sumOt(es)]; };
+    const workEs = inMonth.filter(e => roleOf(ccById(e.cc)) !== "sup");
+    CODES.forEach((b, i) => { const row = rb.getRow(4 + i); row.values = [b, BNAME[b], ...brAgg(workEs.filter(e => e.brand === b))]; paint(row, i % 2 ? GREY : "FFFFFFFF"); });
+    const rbT = rb.getRow(4 + CODES.length); rbT.values = ["Total", "Semua brand", ...brAgg(workEs)]; paint(rbT, BLUE, { bold: true, color: { argb: "FFFFFFFF" } });
+
     // 3. Sheet per orang
-    const used = new Set(["Rekap", "Ringkasan Mingguan", "Raw Data", "Kehadiran"]);
+    const used = new Set(["Rekap", "Ringkasan Mingguan", "Rekap Brand", "Raw Data", "Kehadiran"]);
     workers().forEach(c => {
       let nm = (c.name || "CC").replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 31).trim() || "CC"; let k = 2; while (used.has(nm)) nm = nm.slice(0, 28) + " " + (k++); used.add(nm);
       const role = roleOf(c), u = UNIT[role], bs = brandsOf(c);
@@ -862,6 +895,7 @@ async function exportXlsx() {
       if (role === "admin") cols.push(["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Total upload", 11]);
       else if (role === "dg") cols.push(["Jumlah desain", 11], ["Jenis", 14], ["Desain campaign", 26]);
       else cols.push(["Jumlah video", 11]);
+      cols.push(["File data", 9]);
       cols.push(["Target harian", 10], ["Status", 15], ["Tugas harian", 46], ["Link hasil kerja", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Diisi pada", 16]);
       const L = cols.length, iQty = role === "admin" ? 8 : 5, iT = cols.findIndex(x => x[0] === "Target harian") + 1, iSt = iT + 1, iLink = iSt + 2, iKend = iSt + 3, iOt = L - 1;
       const ws = wb.addWorksheet(nm, { views: [{ state: "frozen", ySplit: 7, xSplit: 3 }] });
@@ -888,7 +922,8 @@ async function exportXlsx() {
           const vals = [no, HARI[d.getDay()], xd(s), e ? e.brand : ""];
           if (role === "admin") vals.push(e ? e.fb : "", e ? e.yt : "", e ? e.shopee : "", e ? e.qty : "");
           else if (role === "dg") vals.push(e ? e.qty : "", e ? (e.jenis || []).join(" + ") : "", e ? (e.campaign || []).join(", ") : "");
-          else vals.push(e ? e.qty : "");
+          else vals.push(e ? e.qty : 0);
+          vals.push(e ? filesOf(e) : 0);
           vals.push(dT || "", st, e ? e.tugas || "" : (ab ? ab.note || "" : ""), "", e ? e.kendala || "" : "", e ? e.solusi || "" : "", e ? otA(e) : 0, e ? fmtTs(e.updatedAt) : "");
           const rr = ws.getRow(row++); rr.values = vals; rr.getCell(3).numFmt = "dd/mm/yyyy";
           rr.eachCell({ includeEmpty: true }, x => { x.border = box; x.alignment = { vertical: "top", wrapText: true }; });
@@ -920,12 +955,12 @@ async function exportXlsx() {
 
     // 5. Raw data
     const raw = wb.addWorksheet("Raw Data", { views: [{ state: "frozen", ySplit: 1 }] });
-    const rc = [["Tanggal", 12], ["Hari", 9], ["Nama", 20], ["Jabatan", 16], ["Brand", 8], ["Jumlah", 9], ["Satuan", 9], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["Target minggu", 11], ["Jenis", 14], ["Desain campaign", 26], ["Tugas harian", 46], ["Link", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Status lembur", 13], ["Diisi pada", 16]];
+    const rc = [["Tanggal", 12], ["Hari", 9], ["Nama", 20], ["Jabatan", 16], ["Brand", 8], ["Jumlah", 9], ["Satuan", 9], ["Facebook", 10], ["YouTube", 10], ["Shopee", 10], ["File data", 9], ["Target minggu", 11], ["Jenis", 14], ["Desain campaign", 26], ["Tugas harian", 46], ["Link", 42], ["Kendala", 28], ["Solusi", 28], ["Lembur (jam)", 10], ["Status lembur", 13], ["Diisi pada", 16]];
     raw.columns = rc.map(x => ({ width: x[1] })); raw.getRow(1).values = rc.map(x => x[0]); head(raw.getRow(1));
     inMonth.filter(e => roleOf(ccById(e.cc)) !== "sup").sort((a, b) => teamSort(ccById(a.cc), ccById(b.cc)) || a.date.localeCompare(b.date) || bsort(a, b)).forEach((e, i) => {
       const c = ccById(e.cc), role = roleOf(c), rr = raw.getRow(2 + i);
-      rr.values = [xd(e.date), HARI[pd(e.date).getDay()], c.name, c.jabatan || "", e.brand, e.qty, UNIT[role], role === "admin" ? e.fb : "", role === "admin" ? e.yt : "", role === "admin" ? e.shopee : "", tgt(c.id, e.brand, monday(e.date)) || "", (e.jenis || []).join(" + "), (e.campaign || []).join(", "), e.tugas || "", "", e.kendala || "", e.solusi || "", +e.lembur || 0, LSTAT[lstat(e)] || "", fmtTs(e.updatedAt)];
-      rr.getCell(1).numFmt = "dd/mm/yyyy"; setLink(rr.getCell(15), e.links || []);
+      rr.values = [xd(e.date), HARI[pd(e.date).getDay()], c.name, c.jabatan || "", e.brand, e.qty, UNIT[role], role === "admin" ? e.fb : "", role === "admin" ? e.yt : "", role === "admin" ? e.shopee : "", filesOf(e), tgt(c.id, e.brand, monday(e.date)) || "", (e.jenis || []).join(" + "), (e.campaign || []).join(", "), e.tugas || "", "", e.kendala || "", e.solusi || "", +e.lembur || 0, LSTAT[lstat(e)] || "", fmtTs(e.updatedAt)];
+      rr.getCell(1).numFmt = "dd/mm/yyyy"; setLink(rr.getCell(16), e.links || []);
       rr.eachCell({ includeEmpty: true }, x => { x.border = box; x.alignment = { vertical: "top", wrapText: true }; });
     });
     raw.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: rc.length } };
