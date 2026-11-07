@@ -1,5 +1,5 @@
 /**
- * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2.3)
+ * DAILY REPORT CREATIVE INDOGROUP — penghubung dashboard ke Google Sheets (versi 2.4)
  *
  * Cara pasang / update: lihat PANDUAN.md bagian "Update".
  * Ringkas: tempel seluruh isi file ini di Extensions → Apps Script, Save,
@@ -23,7 +23,7 @@ const SESSION_DAYS = 90;
 // ================================================
 
 const TZ = "Asia/Jakarta";
-const VERSION = "v2.3";
+const VERSION = "v2.4";
 const BRAND_CODES = ["OLV", "KNG", "77", "MTR", "IDN", "RS", "TKS"];
 const BRAND_NAMES = { OLV: "Batik Oliver", KNG: "Kenangan Fashion", "77": "Batik 77", MTR: "Batik Menteri", IDN: "Batik Indonesia", RS: "Batik Rama Shinta", TKS: "Batik Taksaka" };
 const JABATAN = ["Content Creator", "Desain Grafis", "Admin", "HR", "Content Director", "Manajer Live dan Video"];
@@ -236,8 +236,7 @@ function saveEntry_(ctx, e) {
     else lemburStatus = "pending";
     row[17] = lemburStatus;
     upsert_(SH.db, r => String(r[0]) === row[0], row);
-    rebuildPerson_(m);
-    markDirty_();
+    markPerson_(m.id);
   });
   return { ok: true, updatedAt: new Date().toISOString(), lemburStatus: lemburStatus };
 }
@@ -348,6 +347,22 @@ function rapikan_() {
 }
 
 function markDirty_() { PropertiesService.getScriptProperties().setProperty("dirty", "1"); }
+/** Tandai tab orang ini perlu dirapikan. Tab dibangun ulang oleh jadwal otomatis (± 5 menit),
+ *  BUKAN saat menyimpan, supaya simpan report cepat dan tidak saling tunggu (penyebab "Belum tersimpan"). */
+function markPerson_(id) {
+  const p = PropertiesService.getScriptProperties();
+  const list = (p.getProperty("dirtyP") || "").split(",").filter(String);
+  if (list.indexOf(String(id)) < 0) list.push(String(id));
+  p.setProperty("dirtyP", list.join(","));
+  p.setProperty("dirty", "1");
+}
+/** Kunci khusus perapian sheet (terpisah dari kunci simpan report, jadi simpan tidak pernah menunggu perapian). */
+function withMaint_(fn, waitMs) {
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(waitMs || 1000)) return false;
+  try { fn(); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+  return true;
+}
 
 function maybeRebuildAll_() {
   const p = PropertiesService.getScriptProperties();
@@ -611,8 +626,7 @@ function moveEntry_(ctx, req) {
     const sh = sheet_(SH.db);
     sh.getRange(i + 2, 1).setValue(kTo);
     sh.getRange(i + 2, 4).setValue(to);
-    rebuildPerson_(m);
-    markDirty_();
+    markPerson_(m.id);
   });
   return { ok: true };
 }
@@ -627,8 +641,7 @@ function deleteEntry_(ctx, req) {
   withLock_(() => {
     const i = rows_(SH.db).findIndex(r => String(r[0]) === key);
     if (i >= 0) sheet_(SH.db).deleteRow(i + 2);
-    rebuildPerson_(m);
-    markDirty_();
+    markPerson_(m.id);
   });
   return { ok: true };
 }
@@ -649,7 +662,7 @@ function approveLembur_(ctx, req) {
       sh.getRange(i + 2, 18, 1, 3).setValues([[decision, ctx.email, now]]);
       touched[String(r[2])] = true; n++;
     });
-    ctx.team.filter(m => touched[m.id]).forEach(m => rebuildPerson_(m));
+    Object.keys(touched).forEach(markPerson_);
     markDirty_();
   });
   return { ok: true, count: n, decision: decision };
@@ -681,8 +694,7 @@ function saveAbsence_(ctx, req) {
       else sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
     });
     del.sort((a, b) => b - a).forEach(r => sh.deleteRow(r));
-    rebuildPerson_(m);
-    markDirty_();
+    markPerson_(m.id);
   });
   return { ok: true };
 }
@@ -852,7 +864,7 @@ function upsert_(def, match, row) {
 /** Jalankan fn dengan kunci. waitMs = berapa lama menunggu proses lain selesai. */
 function withLock_(fn, waitMs) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(waitMs || 25000)) throw new Error("BUSY:lock");
+  if (!lock.tryLock(waitMs || 30000)) throw new Error("BUSY:lock");
   try { fn(); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
 }
 function d_(v) {
@@ -881,21 +893,35 @@ function setupAwal() {
   try { SpreadsheetApp.getActive().toast("Siap (" + VERSION + "). Lanjutkan: Deploy → Manage deployments → New version.", "Daily Report", 10); } catch (x) { }
 }
 
-/** Dijalankan otomatis tiap 5 menit: merapikan tab "Semua Report" kalau ada isian baru. */
+/** Dijalankan otomatis tiap 5 menit: membangun ulang tab orang yang berubah + "Semua Report".
+ *  Memakai kunci perapian sendiri, jadi website tetap bisa menyimpan selama perapian berjalan. */
 function autoRapikan() {
   const p = PropertiesService.getScriptProperties();
-  if (p.getProperty("dirty") !== "1" && p.getProperty("needFull") !== "1") return;
-  try {
+  if (p.getProperty("dirty") !== "1" && p.getProperty("needFull") !== "1" && !p.getProperty("dirtyP")) return;
+  withMaint_(() => {
+    // ambil & kosongkan daftar tanda dengan kunci simpan (sebentar saja)
+    let full = false, ids = [];
     withLock_(() => {
-      if (p.getProperty("needFull") === "1") { rapikan_(); p.setProperty("needFull", "0"); }
-      else rebuildAll_();
-      p.setProperty("dirty", "0");
-    }, 5000);
-  } catch (e) { if (String(e.message).indexOf("BUSY:") !== 0) throw e; }   // sedang dipakai: coba lagi 5 menit kemudian
+      full = p.getProperty("needFull") === "1";
+      ids = (p.getProperty("dirtyP") || "").split(",").filter(String);
+      p.setProperty("needFull", "0"); p.setProperty("dirtyP", ""); p.setProperty("dirty", "0");
+    }, 20000);
+    try {
+      if (full) { rapikan_(); return; }
+      const team = readTeam_(), db = rows_(SH.db), ab = rows_(SH.absen);
+      team.filter(m => ids.indexOf(m.id) >= 0).forEach(m => rebuildPerson_(m, db, ab));
+      rebuildAll_(team, db, ab);
+    } catch (e) {
+      // gagal: tandai lagi supaya dicoba di menit berikutnya
+      if (full) p.setProperty("needFull", "1");
+      ids.forEach(markPerson_);
+      throw e;
+    }
+  }, 1000);
 }
 
 function rapikanSemua() {
-  withLock_(rapikan_, 300000);
+  withMaint_(rapikan_, 300000);
   try { SpreadsheetApp.getActive().toast("Semua sheet sudah dirapikan.", "Daily Report", 5); } catch (x) { }
 }
 

@@ -1,4 +1,4 @@
-/* Daily Report Creative v2.4 — biru malam, liquid glass ala iPhone
+/* Daily Report Creative v2.4 — biru malam, glassmorphism 2.0 (lapisan kaca buram berlapis di atas langit berbintang)
    Palet: #06141B · #11212D · #253745 · #4A5C6A · #9BA8AB · #CCD0CF
    Latar: langit malam berbintang (bg-bintang.jpg)
    Tata letak: top bar kaca → hero (judul, cincin target, statistik besar + cover) → chip brand → panel kaca / kartu terang */
@@ -392,3 +392,99 @@ details.move summary{cursor:pointer;font-size:13px;color:var(--g700);font-weight
 @supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.page{background:rgba(17,33,45,.96)}.nav,.stat,.setbox{background:rgba(37,55,69,.85)}}
 .bcard .bhead .bcode{color:var(--g100)}
 .bcard.total .bhead .bcode{color:var(--g900);font-size:14px}
+
+/* =====================================================================
+   GLASSMORPHISM 2.0
+   Lapisan kaca buram berlapis: kaca gelap (panel) & kaca susu (kartu),
+   tepi cahaya bergradasi, sorotan dalam, bayangan lembut berlapis.
+   Palet tetap biru malam, latar langit berbintang tidak diubah.
+   ===================================================================== */
+:root{
+  --gl-dark:linear-gradient(155deg,rgba(37,55,69,.42),rgba(6,20,27,.46));
+  --gl-dark-2:linear-gradient(155deg,rgba(74,92,106,.30),rgba(17,33,45,.36));
+  --gl-milk:linear-gradient(160deg,rgba(238,241,241,.86),rgba(204,208,207,.74));
+  --gl-milk-2:rgba(255,255,255,.62);
+  --gl-blur:blur(28px) saturate(170%);
+  --gl-shadow:0 1px 1px rgba(0,0,0,.18),0 10px 24px -6px rgba(0,0,0,.35),0 30px 60px -20px rgba(0,0,0,.45);
+  --gl-hi:inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(255,255,255,.04);
+  --gl-hi-milk:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(6,20,27,.06);
+  --card:rgba(214,219,220,.80);
+  --paper:rgba(226,230,231,.84);
+}
+
+/* wadah halaman: kaca tipis, bintang tetap terlihat */
+.page{background:linear-gradient(150deg,rgba(37,55,69,.34),rgba(17,33,45,.42) 50%,rgba(6,20,27,.55));
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 40px 100px -20px rgba(0,0,0,.6);
+  -webkit-backdrop-filter:blur(6px) saturate(150%)!important;backdrop-filter:blur(6px) saturate(150%)!important}
+
+/* tepi cahaya bergradasi (ciri kaca 2.0) */
+.nav,.stat,.pcard,.bcard,.calcard,.daycard,.setbox,.otpanel,.band,.gatebox,.hero-r,.modalbox,.notice{position:relative;isolation:isolate}
+.nav::before,.stat::before,.pcard::before,.bcard::before,.calcard::before,.daycard::before,.setbox::before,.otpanel::before,
+.band::before,.gatebox::before,.hero-r::before,.modalbox::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;z-index:2;
+  background:linear-gradient(160deg,rgba(255,255,255,.55),rgba(255,255,255,.12) 28%,rgba(255,255,255,0) 50%,rgba(255,255,255,.06) 72%,rgba(255,255,255,.32));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+
+/* kaca gelap: top bar, statistik, kalender, rekap, pengaturan */
+.nav,.stat,.setbox,.gatebox{background:var(--gl-dark-2);border-color:transparent;box-shadow:var(--gl-hi),var(--gl-shadow)}
+.band,.calcard,.bcard.total{background:var(--gl-dark);border-color:transparent;box-shadow:var(--gl-hi),var(--gl-shadow)}
+.nav,.stat,.setbox,.gatebox,.band,.calcard,.bcard.total,.otpanel{-webkit-backdrop-filter:var(--gl-blur);backdrop-filter:var(--gl-blur)}
+.navcap{background:rgba(3,12,17,.38);border-color:rgba(255,255,255,.10);box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}
+.card.otpanel,.otpanel{background:linear-gradient(155deg,rgba(246,236,210,.20),rgba(246,236,210,.08));border-color:transparent;box-shadow:var(--gl-hi),var(--gl-shadow)}
+
+/* kaca susu: kartu nama, kartu brand, panel tanggal, lembur */
+.pcard,.bcard:not(.total),.daycard,.otitem{background:var(--gl-milk);border:0;
+  -webkit-backdrop-filter:var(--gl-blur);backdrop-filter:var(--gl-blur);box-shadow:var(--gl-hi-milk),var(--gl-shadow)}
+.daycard{background:linear-gradient(160deg,rgba(241,243,243,.90),rgba(214,219,220,.82))}
+.pcard::before,.bcard:not(.total)::before,.daycard::before{background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(255,255,255,.35) 30%,rgba(255,255,255,0) 55%,rgba(155,168,171,.35))}
+@media (hover:hover) and (prefers-reduced-motion:no-preference){
+  .pcard,.bcard{transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s}
+  .pcard:hover,.bcard:hover{transform:translateY(-3px);box-shadow:var(--gl-hi-milk),0 2px 2px rgba(0,0,0,.18),0 18px 36px -8px rgba(0,0,0,.45),0 40px 80px -24px rgba(0,0,0,.5)}
+  .bcard.total:hover{box-shadow:var(--gl-hi),0 2px 2px rgba(0,0,0,.18),0 18px 36px -8px rgba(0,0,0,.45),0 40px 80px -24px rgba(0,0,0,.5)}
+}
+
+/* isian & tombol di kaca susu: putih transparan */
+.daycard :where(textarea,input[type=number],input[type=text]),.daycard .stepper button,.daycard .stepper input,.pcard .tin,.tgtbox input,.until input,.moverow select{
+  background:rgba(255,255,255,.72);border-color:rgba(6,20,27,.14);box-shadow:inset 0 1px 2px rgba(6,20,27,.06)}
+.daycard :where(textarea,input):focus{background:#fff}
+.ditem,.ro{background:rgba(255,255,255,.60);border-color:rgba(255,255,255,.75);box-shadow:inset 0 1px 0 #fff}
+.chip,.mini,.lk a,.linkout a{background:rgba(255,255,255,.66);border-color:rgba(6,20,27,.12)}
+.dzone,.fdfield,.tgtbox{background:rgba(155,168,171,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+.absbox{background:rgba(255,255,255,.38)}
+
+/* pil & chip di kaca gelap: kaca terang saat dipilih */
+.bchip,.tab{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+.bchip:hover,.tab:hover{background:rgba(255,255,255,.14)}
+.bchip.on,.tab[aria-selected="true"]{background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(204,208,207,.85));border-color:rgba(255,255,255,.8);color:var(--g900);
+  box-shadow:inset 0 1px 0 #fff,0 6px 18px -6px rgba(0,0,0,.5)}
+.tab[aria-selected="true"] small{color:var(--g500)}
+.pill{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.2)}
+.pill.sel{background-color:rgba(3,12,17,.6);border-color:rgba(255,255,255,.12)}
+.hpill{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.2);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+
+/* kalender: sel kaca */
+.cell{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.cell.has{background:linear-gradient(160deg,rgba(155,168,171,.34),rgba(74,92,106,.30));border-color:rgba(255,255,255,.16)}
+.cell.hit{background:linear-gradient(160deg,rgba(255,255,255,.95),rgba(204,208,207,.86));border-color:rgba(255,255,255,.85);box-shadow:inset 0 1px 0 #fff,0 6px 16px -6px rgba(0,0,0,.5)}
+.cell.sun{background:rgba(0,0,0,.14)}
+.hero-r{background:rgba(255,255,255,.08);border-color:transparent;box-shadow:var(--gl-hi),var(--gl-shadow);-webkit-backdrop-filter:var(--gl-blur);backdrop-filter:var(--gl-blur)}
+.hero-r.square{background:rgba(155,168,171,.55)}
+.prog,.ring .rbg{background:rgba(3,12,17,.4)}
+.ring .rbg{stroke:rgba(3,12,17,.45)}
+
+/* modal, notifikasi, toast */
+.modalbox{background:linear-gradient(160deg,rgba(241,243,243,.90),rgba(204,208,207,.82));border:0;
+  -webkit-backdrop-filter:var(--gl-blur);backdrop-filter:var(--gl-blur);box-shadow:var(--gl-hi-milk),0 40px 100px -20px rgba(0,0,0,.6)}
+.modal{background:rgba(3,12,17,.45);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.notice{background:linear-gradient(160deg,rgba(246,236,210,.92),rgba(246,236,210,.80));border:1px solid rgba(255,255,255,.6);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:var(--gl-shadow)}
+.unsent{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;background:linear-gradient(160deg,rgba(246,222,220,.94),rgba(246,222,220,.82));color:var(--bad)}
+.unsent span{flex:1 1 260px}
+.toast{background:linear-gradient(160deg,rgba(37,55,69,.78),rgba(6,20,27,.86));-webkit-backdrop-filter:blur(20px) saturate(160%);backdrop-filter:blur(20px) saturate(160%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 14px 40px -10px rgba(0,0,0,.6)}
+
+@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){
+  .page{background:rgba(17,33,45,.96)} .nav,.stat,.setbox,.band,.calcard,.bcard.total{background:rgba(17,33,45,.92)}
+  .pcard,.bcard:not(.total),.daycard,.otitem,.modalbox{background:#dde1e0}
+}

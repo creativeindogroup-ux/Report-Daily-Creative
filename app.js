@@ -21,7 +21,7 @@ const LSTAT = { acc: "Disetujui", pending: "Menunggu ACC", tolak: "Ditolak" };
 const UNIT = { cc: "video", dg: "desain", admin: "upload" };
 const HARI = ["Minggu","Senin","Selasa","Rabu","Kamis","Jumat","Sabtu"];
 const BULAN = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-const POLL_MS = 30000, AUTOSAVE_MS = 2000;
+const POLL_MS = 30000, AUTOSAVE_MS = 1500, SERVER_VER = "v2.4";
 
 /* ---------------- util ---------------- */
 const $ = id => document.getElementById(id);
@@ -52,7 +52,7 @@ const S = {
 };
 let SESSION = ls.get("sess") || "";
 
-function toast(m) { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
+function toast(m, ms) { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, ms || 2600); }
 const ccById = id => S.ccs.find(c => c.id === id);
 /** cc / dg / admin mengisi report; sup = pengawas (HR, Content Director, Manajer, lainnya) hanya memantau */
 const roleOf = c => { const j = String(c && c.jabatan || "").trim(); return !j || /creator|^cc$/i.test(j) ? "cc" : /desain|design|graf/i.test(j) ? "dg" : /^admin/i.test(j) ? "admin" : "sup"; };
@@ -476,7 +476,7 @@ function renderDay() {
     qtyBlock = `<div class="field"><label class="lbl" for="qIn">Video diupload hari ini</label>${stepper("qIn", e.qty, "Jumlah video")}${dT ? `<span class="hint">Target harian ± ${fmt(dT)} video</span>` : ""}</div>`;
   }
   const fdVal = e.updatedAt ? filesOf(e) : 0, fdManual = !!+e.filesManual;
-  p.innerHTML = head + absMsg + `<form id="dayForm" style="display:grid;gap:12px" autocomplete="off" data-fdm="${fdManual ? 1 : ""}">
+  p.innerHTML = head + absMsg + `<form id="dayForm" style="display:grid;gap:12px" autocomplete="off" data-key="${esc(ekey(c.id, s, b))}" data-fdm="${fdManual ? 1 : ""}">
       ${qtyBlock}
       <div class="field"><label class="lbl" for="tIn">Tugas harian</label><textarea id="tIn" placeholder="Tulis bebas aktivitasmu hari ini untuk brand ${b}, contoh:&#10;- Upload 3 video hardselling&#10;- Shooting konten styling di studio">${esc(e.tugas || "")}</textarea></div>
       <div class="field"><span class="lbl">Link hasil kerja</span><div class="links" id="links">${(e.links && e.links.length ? e.links : [""]).map(linkRow).join("")}</div>
@@ -582,11 +582,11 @@ function renderAll() {
 }
 
 /* ---------------- koneksi ke Google Sheets ---------------- */
-async function api(action, payload = {}, noSession) {
+async function api(action, payload = {}, noSession, keepalive) {
   if (!noSession && !SESSION) { showLogin(); throw { error: "auth" }; }
   let res, j;
   for (let attempt = 0; ; attempt++) {
-    try { res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify({ action, session: SESSION, ...payload }) }); }
+    try { res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify({ action, session: SESSION, ...payload }), keepalive: !!keepalive }); }
     catch (e) { throw { error: "network" }; }
     try { j = await res.json(); } catch (e) { throw { error: "server", detail: "Respon bukan JSON. Cek Deploy Apps Script (akses: Anyone)." }; }
     // Google Sheet sedang dirapikan: tunggu sebentar lalu coba lagi otomatis
@@ -599,24 +599,86 @@ async function api(action, payload = {}, noSession) {
 const errMsg = (e, own) => e && e.error === "busy" ? "Google Sheet sedang dirapikan, coba simpan lagi sebentar" : e && e.error === "forbidden" ? own : e && e.error === "network" ? "Gagal tersambung, periksa koneksi internet" : e && e.error === "auth" ? "Silakan masuk lagi" : "Gagal menyimpan, coba lagi";
 
 const qE = {}, qT = {}; let qC = Promise.resolve();
+/* Antrean simpan di perangkat: setiap report disimpan dulu di HP/laptop, lalu dikirim ke Google Sheets.
+   Kalau gagal (sinyal putus, Google Sheet sibuk, sesi habis, halaman di-refresh/ditutup) report TIDAK hilang:
+   tetap tampil dan dikirim ulang otomatis sampai berhasil. */
+const OUTBOX_KEY = "outbox";
+const outbox = (() => { try { return JSON.parse(ls.get(OUTBOX_KEY) || "{}") || {}; } catch (e) { return {}; } })();
+const saveOutbox = () => ls.set(OUTBOX_KEY, JSON.stringify(outbox));
+const FORBID = {
+  brand_not_assigned: "brand ini belum terdaftar untukmu. Minta atasan menambahkan brand ini di Pengaturan tim",
+  not_owner: "kamu hanya bisa mengisi report milikmu sendiri",
+  unknown_member: "nama ini tidak ada lagi di daftar tim",
+  supervisor_no_report: "jabatan pengawas tidak mengisi report",
+  bad_date: "tanggal tidak valid", bad_brand: "brand tidak dikenal"
+};
+let retryT = null, retryN = 0;
+function unsentCount() { return Object.keys(outbox).length; }
+function showUnsent() {
+  const n = unsentCount(), box = $("unsent"); if (!box) return;
+  box.hidden = !n || !S.ready;
+  if (n) box.querySelector("span").textContent = `${n} report belum terkirim ke Google Sheets. Tersimpan aman di perangkat ini dan dikirim ulang otomatis — jangan hapus data browser.`;
+}
+function sendEntry(id) {
+  const body = outbox[id]; if (!body) return Promise.resolve();
+  const st = (txt, err) => { const x = $("saveState"); if (x && S.sel === body.date && document.querySelector(`#dayPanel [data-key="${id}"]`)) { x.textContent = txt; x.classList.toggle("err", !!err); } };
+  qE[id] = (qE[id] || Promise.resolve()).then(() => outbox[id] === body ? api("saveEntry", { entry: body }, false, true) : null)
+    .then(r => {
+      if (!r) return;
+      if (r.lemburStatus !== undefined) body.lemburStatus = r.lemburStatus;
+      if (outbox[id] === body) { delete outbox[id]; saveOutbox(); }
+      if (S.pending[id] === body) delete S.pending[id];
+      retryN = 0; showUnsent();
+      st((body._silent ? "Tersimpan otomatis " : "Tersimpan ") + new Date().toTimeString().slice(0, 5));
+      if (!body._silent) toast(`Report ${body.brand} ${shortD(body.date)} tersimpan${body.lemburStatus === "pending" ? " · lembur menunggu ACC atasan" : ""}`);
+    })
+    .catch(e => {
+      if (e && e.error === "forbidden") {
+        // ditolak server (bukan masalah jaringan): tidak dikirim ulang, tampilkan alasannya
+        if (outbox[id] === body) { delete outbox[id]; saveOutbox(); }
+        if (S.pending[id] === body) delete S.pending[id];
+        st("Ditolak", true); toast("Report tidak bisa disimpan: " + (FORBID[e.detail] || e.detail || "tidak punya izin"), 8000);
+        showUnsent(); refresh(); return;
+      }
+      st(e && e.error === "auth" ? "Belum tersimpan · masuk lagi untuk mengirim" : "Belum tersimpan · dikirim ulang otomatis", true);
+      showUnsent(); scheduleRetry();
+    });
+  return qE[id];
+}
+function scheduleRetry() {
+  if (retryT || !unsentCount()) return;
+  const wait = [5, 15, 30, 60, 120][Math.min(retryN, 4)] * 1000; retryN++;
+  retryT = setTimeout(() => { retryT = null; drainOutbox(); }, wait);
+}
+function drainOutbox() {
+  if (!SESSION) return;
+  clearTimeout(retryT); retryT = null;
+  Object.keys(outbox).forEach(id => { S.pending[id] = outbox[id]; sendEntry(id); });
+}
 function saveEntry(cc, s, b, d, silent) {
   const id = ekey(cc, s, b), old = S.entries[id] || {};
   const body = { key: id, cc, date: s, brand: b, ...d, by: S.email, updatedAt: new Date().toISOString() };
   // lembur: diisi sendiri → menunggu ACC, diisi atasan → disetujui, tidak berubah → status lama
   body.lemburStatus = !(+d.lembur > 0) ? "" : S.isAdmin ? "acc" : (+old.lembur === +d.lembur && lstat(old)) ? lstat(old) : "pending";
   if (body.lemburStatus === "acc" && S.isAdmin) body.lemburBy = S.email; else if (+old.lembur === +d.lembur) body.lemburBy = old.lemburBy || "";
-  S.entries[id] = body; S.pending[id] = body; if (!silent) lastDay = ""; renderAll();
-  const st = (txt, err) => { const x = $("saveState"); if (x) { x.textContent = txt; x.classList.toggle("err", !!err); } };
-  qE[id] = (qE[id] || Promise.resolve()).then(() => api("saveEntry", { entry: body }))
-    .then(r => { if (r && r.lemburStatus !== undefined) body.lemburStatus = r.lemburStatus; if (S.pending[id] === body) delete S.pending[id]; st((silent ? "Tersimpan otomatis " : "Tersimpan ") + new Date().toTimeString().slice(0, 5)); if (!silent) toast(`Report ${b} ${shortD(s)} tersimpan${body.lemburStatus === "pending" ? " · lembur menunggu ACC atasan" : ""}`); })
-    .catch(e => { st("Belum tersimpan", true); toast(errMsg(e, "Kamu hanya bisa mengisi report milikmu sendiri untuk brand yang kamu pegang")); });
+  Object.defineProperty(body, "_silent", { value: !!silent, enumerable: false, writable: true });
+  S.entries[id] = body; S.pending[id] = body; outbox[id] = body; saveOutbox();
+  if (!silent) lastDay = ""; renderAll();
+  sendEntry(id);
 }
+window.addEventListener("online", () => { retryN = 0; drainOutbox(); });
+$("unsentBtn").addEventListener("click", () => { retryN = 0; drainOutbox(); toast("Mengirim ulang report…"); });
+// halaman ditutup / di-refresh / pindah aplikasi: kirim isian yang belum sempat tersimpan
+const flushNow = () => { if (AUTO.flush) AUTO.flush(); };
+window.addEventListener("pagehide", flushNow);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNow(); });
+window.addEventListener("beforeunload", flushNow);
 async function deleteEntry(cc, s, b) {
   const k = ekey(cc, s, b);
   try {
     await (qE[k] || Promise.resolve());
     await api("deleteEntry", { cc, date: s, brand: b });
-    delete S.entries[k]; delete S.pending[k]; S.lemburPending = (S.lemburPending || []).filter(e => ekey(e.cc, e.date, e.brand) !== k);
+    delete S.entries[k]; delete S.pending[k]; if (outbox[k]) { delete outbox[k]; saveOutbox(); } S.lemburPending = (S.lemburPending || []).filter(e => ekey(e.cc, e.date, e.brand) !== k);
     lastDay = ""; renderAll(); toast(`Report ${b} ${shortD(s)} dihapus`);
   } catch (e) { toast(errMsg(e, "Kamu hanya bisa menghapus report milikmu sendiri")); }
 }
@@ -682,6 +744,8 @@ async function refresh() {
   $("notice").hidden = true;
   S.email = r.email; S.isAdmin = !!r.isAdmin; S.me = r.me || ""; S.sheetUrl = r.sheetUrl || ""; $("sheetBtn").hidden = !S.sheetUrl;
   if (!S.teamDirty) S.ccs = (r.ccs || []).map(c => ({ ...c })).sort(teamSort);
+  // report yang belum terkirim (tersimpan di perangkat) tetap ditampilkan & dikirim ulang
+  Object.keys(outbox).forEach(k => { const o = outbox[k]; if (o.by && S.email !== o.by && r.email !== o.by) return; if (!S.pending[k]) S.pending[k] = o; });
   const ent = {}; (r.entries || []).forEach(e => { ent[ekey(e.cc, e.date, e.brand)] = e; }); Object.assign(ent, S.pending); S.entries = ent;
   const tg = {}; (r.targets || []).forEach(t => { tg[t.cc + "_" + t.brand + "_" + t.week] = t; }); Object.assign(tg, S.pendingT); S.targets = tg;
   S.lemburPending = (r.lemburPending || []).filter(e => !S.pending[ekey(e.cc, e.date, e.brand)]);
@@ -696,7 +760,11 @@ async function refresh() {
   }
   $("userEmail").textContent = S.email; $("nav").hidden = false;
   $("gate").hidden = true; $("app").hidden = false;
+  S.serverVer = r.version || "";
+  if (S.isAdmin && S.serverVer !== SERVER_VER) { $("notice").hidden = false; $("notice").textContent = `Apps Script masih ${S.serverVer || "versi lama"}. Tempel Code.gs ${SERVER_VER} terbaru ke Kode.gs, jalankan setupAwal, lalu Deploy → New version (lihat PANDUAN.md).`; }
   renderAll();
+  showUnsent();
+  if (first && unsentCount()) drainOutbox();
   syncPhotos();
 }
 setInterval(() => { if (document.visibilityState === "visible" && S.ready && !AUTO.flush) refresh(); }, POLL_MS);
@@ -728,6 +796,7 @@ async function onCredential(resp) {
     const r = await api("login", { idToken: resp.credential }, true);
     SESSION = r.session; ls.set("sess", SESSION);
     S.pending = {}; S.pendingT = {};
+    retryN = 0;
     refresh();
   } catch (e) {
     if (e.error === "not_member") showLogin(`${e.email || "Gmail ini"} belum ada di daftar tim. Minta atasan menambahkan Gmail ini di Pengaturan atasan (atau sheet "Anggota").`, "Akun belum terdaftar");

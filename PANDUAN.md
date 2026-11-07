@@ -1,6 +1,33 @@
 # Panduan — Daily Report Creative (GitHub + Google Sheets)
 
-## Update ke versi 2.3 (± 3 menit)
+## Update ke versi 2.4 — perbaikan report tidak tersimpan (± 3 menit, WAJIB)
+
+Penyebab bug: setiap kali report disimpan, Apps Script juga membangun ulang tab orang tersebut di Google Sheet sambil "mengunci" sheet. Kalau beberapa orang menyimpan bersamaan, atau perapian otomatis sedang berjalan, simpanan lain harus antre terlalu lama. Hasilnya muncul **"Belum tersimpan"**. Tampilan di layar sempat terlihat terisi, tetapi data tidak sampai ke Google Sheet, sehingga hilang saat halaman di-refresh.
+
+Isi versi 2.4:
+- **Simpan jadi cepat.** Report langsung ditulis ke data utama. Tab per orang dan "Semua Report" dirapikan oleh jadwal otomatis tiap ± 5 menit, dengan kunci terpisah, jadi perapian tidak pernah menahan orang yang sedang menyimpan.
+- **Report tidak bisa hilang lagi.** Setiap isian disimpan dulu di HP/laptop, lalu dikirim ke Google Sheets.
+  - Kalau sinyal putus, Google Sheet sibuk, sesi login habis, atau halaman di-refresh/ditutup, isian tetap tampil dan dikirim ulang otomatis sampai berhasil.
+  - Selama masih ada yang belum terkirim, muncul kotak merah **"… report belum terkirim"** dengan tombol **Kirim sekarang**.
+- **Simpan saat ditutup:** isian yang belum sempat tersimpan otomatis ikut dikirim ketika tab ditutup, di-refresh, atau berpindah aplikasi.
+- **Alasan penolakan jelas:** contohnya "brand ini belum terdaftar untukmu", jadi atasan tahu apa yang harus dibetulkan di Pengaturan tim.
+- **Peringatan versi:** atasan melihat peringatan kuning kalau Apps Script belum diperbarui.
+- **Tampilan glassmorphism 2.0:** panel kaca buram berlapis dengan tepi cahaya, kartu kaca susu, dan sel kalender kaca. Palet biru malam dan latar langit tidak berubah.
+
+### Langkahnya (tanpa langkah ini bug belum hilang)
+1. **GitHub:** sudah otomatis dari Claude.
+2. **Google Sheets:**
+   - Buka **Extensions → Apps Script**, buka **Kode.gs**, lalu tekan **Ctrl + A → Delete**.
+   - Tempel `Code.gs` terbaru dari GitHub (**Copy raw file**), lalu klik **Save**.
+   - Pilih **`setupAwal`**, lalu klik **▶ Run**, dan tunggu sampai *Execution completed*.
+   - Klik **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**.
+3. Minta tim membuka website dengan **Ctrl + Shift + R** (HP: tutup lalu buka lagi tab-nya).
+   - Report yang dulu gagal dan masih tersimpan di perangkat mereka akan terkirim otomatis.
+   - Report yang sudah hilang sebelum update ini perlu diisi ulang.
+
+---
+
+## Update ke versi 2.3 (sudah dilakukan)
 
 Isi versi 2.3:
 - **Cuti / Izin / Sakit tidak memotong target.** Konten tetap terjadwal, jadi form report tetap terbuka di hari itu. Video yang tayang bisa dicatat oleh orangnya sendiri atau oleh atasan, dan tetap dihitung ke target.
