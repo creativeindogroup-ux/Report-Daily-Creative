@@ -1,5 +1,17 @@
 # Panduan — Daily Report Creative (GitHub + Google Sheets)
 
+## Tampilan versi 2.5 (tanpa langkah tambahan)
+
+Tampilan diganti ke gaya studio interior:
+- **Warna dan huruf:** latar krem hangat, kartu putih, tombol oranye terakota. Judul memakai huruf serif (Libre Baskerville), isi memakai Inter.
+- **Bagian atas:** top bar putih dan hero krem (judul besar dan cover tim), lalu 3 kartu ringkasan (konten, file data, lembur).
+- **Rekap per nama:** kartu berfoto.
+- **Rekap per brand:** berada di pita bercorak kayu cokelat.
+
+Hanya tampilan yang berubah. Apps Script tidak perlu diperbarui lagi, cukup buka website dengan **Ctrl + Shift + R**.
+
+---
+
 ## Update ke versi 2.4 — perbaikan report tidak tersimpan (± 3 menit, WAJIB)
 
 Penyebab bug: setiap kali report disimpan, Apps Script juga membangun ulang tab orang tersebut di Google Sheet sambil "mengunci" sheet. Kalau beberapa orang menyimpan bersamaan, atau perapian otomatis sedang berjalan, simpanan lain harus antre terlalu lama. Hasilnya muncul **"Belum tersimpan"**. Tampilan di layar sempat terlihat terisi, tetapi data tidak sampai ke Google Sheet, sehingga hilang saat halaman di-refresh.

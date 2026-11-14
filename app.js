@@ -228,31 +228,41 @@ function heroRing() {
   const pct = t ? Math.min(100, Math.round(v / t * 100)) : 0, R = 34, C = 2 * Math.PI * R;
   return `<div class="ring" title="Capaian target minggu ini: ${v} dari ${t || "–"}"><svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="${R}" class="rbg"/><circle cx="42" cy="42" r="${R}" class="rfg" stroke-dasharray="${C * pct / 100} ${C}"/></svg><b>${t ? pct + "%" : "–"}</b><span>target minggu ini</span></div>`;
 }
+const ICO = {
+  video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="m15.5 10.5 6-3.5v10l-6-3.5"/></svg>',
+  file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8.5 13h7M8.5 17h5"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 6.5V12l3.5 2.5"/></svg>'
+};
 function heroStats() {
   const { first, last } = range(), es = ents(first, last, { cc: "", brand: S.brandF }).filter(e => roleOf(ccById(e.cc)) !== "sup");
-  const st = (v, l) => `<div class="hstat"><span>${l}</span><b>${v}</b></div>`;
-  return `<div class="hstats">${st(sum(es, "qty"), "Konten bulan ini")}${st(sumFiles(es), "File data")}${st(fmt(sumOt(es)) + "<small> jam</small>", "Lembur disetujui")}</div>`;
+  const pend = S.isAdmin ? (S.lemburPending || []).length : 0;
+  const card = (ico, title, v, unit, sub, href, btn, extra = "") => `<article class="fcard"><div class="fhead"><span class="fico">${ico}</span><div><h3>${title}</h3><p>${sub}</p></div>${extra}</div>
+    <div class="fval"><b>${v}</b>${unit ? `<small>${unit}</small>` : ""}</div><a class="gbtn2" href="${href}">${btn}</a></article>`;
+  return `<div class="featrow">${card(ICO.video, "Konten bulan ini", sum(es, "qty"), "konten", "Video, desain & upload seluruh tim", "#kalender", "Lihat kalender", heroRing())}
+    ${card(ICO.file, "File data", sumFiles(es), "file", "Google Docs & Spreadsheet", "#brand", "Rekap brand")}
+    ${card(ICO.clock, "Lembur disetujui", fmt(sumOt(es)), "jam", pend ? pend + " lembur menunggu ACC" : "Hanya lembur yang sudah di-ACC", pend ? "#otPanel" : "#rekap", pend ? "Cek ACC" : "Rekap nama")}</div>`;
 }
 function renderHero() {
   const h = $("hero"), [y, m] = S.month.split("-").map(Number), per = BULAN[m - 1] + " " + y;
   if (!S.view) {
     const me = ccById(S.me), cover = S.photosBig.__cover || S.photos.__cover;
     h.className = "hero home";
-    h.innerHTML = `<div class="hero-l"><span class="hpill">Divisi Creative Indogroup · ${per}</span>
-      <div class="htitle"><h1>Daily Report<br>Creative</h1>${heroRing()}</div>
-      ${heroStats()}
-      <div class="hfoot">${me && roleOf(me) !== "sup" ? `<button class="pbtn" data-open="${esc(me.id)}">Isi report saya</button>` : ""}</div></div>
+    h.innerHTML = `<div class="hero-in"><div class="hero-l"><span class="hpill">Divisi Creative Indogroup · ${per}</span>
+      <h1>Daily Report<br>Creative</h1>
+      <p class="hsub">Laporan harian konten video, desain grafis dan upload admin untuk tujuh brand batik Indo Group.</p>
+      <div class="hfoot">${me && roleOf(me) !== "sup" ? `<button class="pbtn cta" data-open="${esc(me.id)}">Isi report saya</button>` : `<a class="pbtn cta" href="#rekap">Lihat rekap tim</a>`}</div></div>
       <div class="hero-r cover">${cover ? `<img class="coverimg" src="${cover}" alt="Cover tim Creative Indogroup">` : `<div class="coverph"><b>Cover tim</b><span>Foto 16:9, misalnya foto tim atau studio</span></div>`}
-      ${S.isAdmin ? `<button class="photo-btn" data-photo="__cover">${cover ? "Ganti cover" : "Tambah cover"}</button>` : ""}</div>`;
+      ${S.isAdmin ? `<button class="photo-btn" data-photo="__cover">${cover ? "Ganti cover" : "Tambah cover"}</button>` : ""}</div></div>
+      ${heroStats()}`;
     return;
   }
   const c = ccById(S.view); if (!c) return;
   h.className = "hero person";
-  h.innerHTML = `<div class="hero-l"><span class="eyebrow">${esc(c.jabatan || "Content Creator")}</span>
+  h.innerHTML = `<div class="hero-in"><div class="hero-l"><span class="eyebrow">${esc(c.jabatan || "Content Creator")}</span>
     <h1>${esc(c.name)}</h1><span class="hpill">${roleOf(c) === "dg" ? "Bisa mengisi semua brand" + (assignedOf(c).length ? " · utama " + assignedOf(c).join(", ") : "") : brandsOf(c).map(b => esc(b + " · " + BNAME[b])).join("&nbsp;&nbsp;|&nbsp;&nbsp;")}</span>
     <div class="hfoot"><span class="arrow"></span><button class="pbtn" data-home>Kembali ke All Creative</button></div></div>
     <div class="hero-r square">${S.photos[c.id] ? `<img class="bigphoto" src="${S.photosBig[c.id] || S.photos[c.id]}" alt="Foto ${esc(c.name)}">` : `<span class="initials">${esc(initials(c.name))}</span>`}
-    ${canEdit(c.id) ? `<button class="photo-btn" data-photo="${esc(c.id)}">${S.photos[c.id] ? "Ganti foto" : "Tambah foto"}</button>` : ""}</div>`;
+    ${canEdit(c.id) ? `<button class="photo-btn" data-photo="${esc(c.id)}">${S.photos[c.id] ? "Ganti foto" : "Tambah foto"}</button>` : ""}</div></div>`;
 }
 function renderNav() {
   const [y, m] = S.month.split("-").map(Number); $("monthLbl").textContent = BULAN[m - 1] + " " + y;
@@ -290,8 +300,10 @@ function renderPeople() {
     }).join("") || `<div class="prole">Belum ada isian bulan ini${role === "dg" ? " · bisa mengisi semua brand" : ""}</div>`;
     const ac = absCount(c.id, first, last), an = STATUS.reduce((a, k) => a + ac[k], 0);
     const plat = role === "admin" ? `<div class="plat"><span>Facebook ${sum(month, "fb")}</span><span>YouTube ${sum(month, "yt")}</span><span>Shopee ${sum(month, "shopee")}</span></div>` : "";
+    const ph = S.photosBig[c.id] || S.photos[c.id];
     return `<article class="pcard">
-      <div class="phead">${ava(c)}<div style="min-width:0"><div class="pname">${esc(c.name)}</div><div class="prole">${esc(c.jabatan || "Content Creator")}</div></div></div>
+      <div class="pimg">${ph ? `<img src="${ph}" alt="Foto ${esc(c.name)}" loading="lazy">` : `<span>${esc(initials(c.name))}</span>`}</div>
+      <div class="phead"><div style="min-width:0"><div class="pname">${esc(c.name)}</div><div class="prole">${esc(c.jabatan || "Content Creator")}</div></div></div>
       <div style="display:grid;gap:8px">${rows}</div>${plat}
       <div class="pmeta"><div><b>${sum(month, "qty")}</b><span>${u} bulan ini</span></div><div class="fd"><b>${sumFiles(month)}</b><span>file data</span></div><div class="ot"><b>${fmt(sumOt(month))}j</b><span>lembur</span></div><div class="kd"><b>${month.filter(e => e.kendala).length}</b><span>kendala</span></div><div class="ab" title="${STATUS.map(k => k + " " + ac[k]).join(", ")}"><b>${an}</b><span>${an ? absShort(ac) : "absen"}</span></div></div>
       <div class="pfoot"><span class="last">${lf ? "Terakhir mengisi " + shortD(ds(lf)) + " " + pad(lf.getHours()) + ":" + pad(lf.getMinutes()) : `${days ? "" : "Belum mengisi bulan ini"}`}</span><button class="pbtn" data-open="${esc(c.id)}">Lihat report</button></div>

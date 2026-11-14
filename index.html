@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Daily Report Creative Indogroup</title>
 <meta name="description" content="Daily report tim Creative Indogroup: kalender konten per brand, target mingguan, lembur dan export Excel. Data tersimpan di Google Sheets.">
-<meta name="theme-color" content="#06141b">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2306141b'/%3E%3Crect x='7' y='9' width='18' height='16' rx='3' fill='none' stroke='white' stroke-width='2.4'/%3E%3Cpath d='M7 14h18M12 6v5M20 6v5' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#f5f2ed">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e3894f'/%3E%3Crect x='7' y='9' width='18' height='16' rx='3' fill='none' stroke='white' stroke-width='2.4'/%3E%3Cpath d='M7 14h18M12 6v5M20 6v5' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="page">
+<div class="page" id="top">
   <nav class="nav" id="nav" hidden aria-label="Navigasi">
-    <span class="logo" aria-hidden="true">dr</span>
+    <a class="brandmark" href="#top" aria-label="Daily Report Creative"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 1 0 9.5 9.5"/><path d="M12 7a5 5 0 1 0 5 5h-5z"/></svg></span><b>Daily<span>Report</span></b></a>
     <div class="navcap">
       <select id="ccSel" class="pill sel" aria-label="Pilih nama"></select>
       <div class="mnav">
@@ -27,16 +27,16 @@
     <select id="brandF" class="pill sel" aria-label="Filter brand" hidden></select>
     <span class="grow"></span>
     <button class="pill" id="sheetBtn" hidden>Google Sheets</button>
-    <button class="pill" id="exportBtn">Export Excel</button>
+    <button class="pill cta" id="exportBtn">Export Excel</button>
     <span class="who" id="userEmail"></span>
     <button class="pill ghost" id="logoutBtn">Keluar</button>
   </nav>
-  <header class="hero" id="hero">
-    <div class="hero-l">
+  <header class="hero person" id="hero">
+    <div class="hero-in"><div class="hero-l">
       <span class="hpill">Divisi Creative Indogroup</span>
       <h1>Daily Report<br>Creative</h1>
       <p class="hsub">Laporan harian tim konten, desain grafis dan admin.</p>
-    </div>
+    </div></div>
   </header>
 
 
@@ -60,7 +60,7 @@
         <div class="dhead"><h2 id="hOt" class="ottitle">Lembur menunggu ACC</h2><span class="sub" id="otCount"></span><span class="grow"></span><button type="button" class="mini ok" data-okall="1">ACC semua</button></div>
         <ul class="dlist" id="otList"></ul>
       </section>
-      <section class="sec">
+      <section class="sec" id="rekap">
         <h2 class="stitle"><b>Rekap report</b> per nama</h2>
         <p class="ssub" id="rekapSub"></p>
       </section>
@@ -79,7 +79,7 @@
       <section class="stats" id="stats"></section>
     </div>
 
-    <section class="sec">
+    <section class="sec" id="kalender">
       <h2 class="stitle"><b>Kalender</b> konten</h2>
       <p class="ssub" id="calSub"></p>
       <div class="main">
@@ -98,7 +98,7 @@
       </div>
     </section>
 
-    <section class="sec">
+    <section class="sec woodband" id="brand">
       <h2 class="stitle"><b>Rekap</b> per brand</h2>
       <p class="ssub" id="sumSub"></p>
       <div class="brandgrid" id="brandGrid"></div>
