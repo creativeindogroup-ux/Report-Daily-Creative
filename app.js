@@ -584,7 +584,43 @@ function renderOtPanel() {
 }
 
 let lastDay = "";
+/* ---------- NOTIFIKASI BELUM MENGISI REPORT ----------
+   Dicek: hari ini (mulai jam 15.00) dan hari kerja sebelumnya. Hari Minggu, pengawas,
+   dan yang Cuti/Izin/Sakit/Alpha di tanggal itu tidak dihitung. */
+const ALERT_HOUR = 15;
+function prevWork(s) { let d = add(s, -1); if (pd(d).getDay() === 0) d = add(d, -1); return d; }
+function filledOn(cc, d) {
+  if (Object.values(S.entries).some(e => e.cc === cc && e.date === d)) return true;
+  return !!(S.recent && S.recent.e.some(e => e.cc === cc && e.date === d));
+}
+function absentOn(cc, d) { return !!(S.absen[cc + "_" + d] || (S.recent && S.recent.a.some(a => a.cc === cc && a.date === d))); }
+function missingList() {
+  const days = [];
+  if (pd(TODAY).getDay() !== 0 && new Date().getHours() >= ALERT_HOUR) days.push({ d: TODAY, lbl: "hari ini" });
+  days.push({ d: prevWork(TODAY), lbl: pd(TODAY).getDay() === 1 ? "Sabtu kemarin" : "kemarin" });
+  return days.map(x => ({ ...x, who: workers().filter(c => !absentOn(c.id, x.d) && !filledOn(c.id, x.d)) })).filter(x => x.who.length);
+}
+const ALERT_ICO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 21h20z"/><path d="M12 10v5M12 18h.01"/></svg>';
+function renderAlert() {
+  const bar = $("alertBar"); if (!bar || !S.ready) return;
+  const miss = missingList(), me = S.me && ccById(S.me);
+  let h = "";
+  if (S.isAdmin) {
+    if (miss.length) h = `<div class="ab-in">${ALERT_ICO}<div class="ab-txt"><b>Belum mengisi report</b>${miss.map(x =>
+      `<span class="ab-row"><span class="ab-day">${x.lbl[0].toUpperCase() + x.lbl.slice(1)} · ${shortD(x.d)}</span>${x.who.map(c =>
+        `<button type="button" class="ab-name" data-alert-cc="${esc(c.id)}" data-alert-d="${x.d}">${esc(c.name)}</button>`).join("")}</span>`).join("")}</div></div>`;
+  } else if (me && roleOf(me) !== "sup") {
+    const mine = miss.filter(x => x.who.some(c => c.id === me.id));
+    if (mine.length) h = `<div class="ab-in">${ALERT_ICO}<div class="ab-txt"><b>Kamu belum mengisi report ${mine.map(x => `${x.lbl} (${shortD(x.d)})`).join(" dan ")}</b>
+      <span class="ab-row">Isi sekarang supaya rekap tim lengkap.</span></div>
+      <button type="button" class="ab-go" data-alert-cc="${esc(me.id)}" data-alert-d="${mine[0].d}">Isi sekarang</button></div>`;
+  }
+  if (bar.dataset.h !== h) { bar.innerHTML = h; bar.dataset.h = h; }
+  bar.hidden = !h;
+  document.documentElement.style.setProperty("--abh", h && innerWidth >= 760 ? bar.offsetHeight + "px" : "0px");
+}
 function renderAll() {
+  renderAlert();
   renderHero(); renderNav(); renderOtPanel(); renderPeople(); renderPersonTop(); renderCal(); renderSummary();
   const key = [S.view, S.sel, curBrand(), S.ccs.length, S.isAdmin].join("|"), dp = $("dayPanel");
   if (!(dp.contains(document.activeElement) && key === lastDay && document.activeElement.tagName !== "BUTTON")) renderDay();
@@ -678,6 +714,7 @@ function saveEntry(cc, s, b, d, silent) {
   if (!silent) lastDay = ""; renderAll();
   sendEntry(id);
 }
+setInterval(() => renderAlert(), 60000);
 window.addEventListener("online", () => { retryN = 0; drainOutbox(); });
 $("unsentBtn").addEventListener("click", () => { retryN = 0; drainOutbox(); toast("Mengirim ulang report…"); });
 // halaman ditutup / di-refresh / pindah aplikasi: kirim isian yang belum sempat tersimpan
@@ -754,6 +791,11 @@ async function refresh() {
   }
   if (my !== S.seq) return;
   $("notice").hidden = true;
+  { const pw = prevWork(TODAY);
+    if (!(start <= pw && TODAY <= end)) api("load", { start: pw, end: TODAY }).then(x => {
+      S.recent = { e: x.entries || [], a: x.absences || [] }; renderAlert();
+    }).catch(() => {});
+    else S.recent = null; }
   S.email = r.email; S.isAdmin = !!r.isAdmin; S.me = r.me || ""; S.sheetUrl = r.sheetUrl || ""; $("sheetBtn").hidden = !S.sheetUrl;
   if (!S.teamDirty) S.ccs = (r.ccs || []).map(c => ({ ...c })).sort(teamSort);
   // report yang belum terkirim (tersimpan di perangkat) tetap ditampilkan & dikirim ulang
@@ -843,6 +885,9 @@ function openView(id) {
   flushAuto(); S.view = id || ""; ls.set("view", S.view); lastDay = ""; renderAll(); scrollTo({ top: 0, behavior: RM });
 }
 document.addEventListener("click", e => {
+  const al = e.target.closest("[data-alert-cc]");
+  if (al) { S.sel = al.dataset.alertD; S.month = S.sel.slice(0, 7); openView(al.dataset.alertCc); refresh();
+    setTimeout(() => $("dayPanel").scrollIntoView({ behavior: RM, block: "start" }), 60); return; }
   const o = e.target.closest("[data-open]"); if (o) { openView(o.dataset.open); return; }
   if (e.target.closest("[data-home]")) { openView(""); return; }
   const ph = e.target.closest("[data-photo]"); if (ph) { const inp = $("photoIn"); inp.dataset.cc = ph.dataset.photo; inp.value = ""; inp.click(); return; }
